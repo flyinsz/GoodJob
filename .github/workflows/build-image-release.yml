@@ -1,0 +1,66 @@
+name: Build GoodJob Image Release Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Gitee branch/tag/ref to build
+        required: false
+        default: master
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_REPO: https://gitee.com/sendoh-huang/GoodJob.git
+  SOURCE_REF: ${{ inputs.source_ref || 'master' }}
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            dockerfile: Dockerfile.backend
+            image: goodjob-backend
+          - name: frontend
+            dockerfile: Dockerfile.frontend
+            image: goodjob-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image tar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: ghcr.io/flyinsz/${{ matrix.image }}:latest
+          build-args: |
+            SOURCE_REPO=${{ env.SOURCE_REPO }}
+            SOURCE_REF=${{ env.SOURCE_REF }}
+          outputs: type=docker,dest=/tmp/${{ matrix.image }}.tar
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Compress and split
+        run: |
+          set -euo pipefail
+          zstd -T0 -10 /tmp/${{ matrix.image }}.tar -o /tmp/${{ matrix.image }}.tar.zst
+          mkdir -p /tmp/parts
+          split -b 45M -d -a 3 /tmp/${{ matrix.image }}.tar.zst /tmp/parts/${{ matrix.image }}.tar.zst.part-
+          sha256sum /tmp/${{ matrix.image }}.tar.zst /tmp/parts/* > /tmp/parts/${{ matrix.image }}.sha256
+          ls -lh /tmp/parts
+
+      - name: Upload parts to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: image-assets-${{ github.run_id }}-${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --title "$TAG" --notes "Docker image parts for ${{ matrix.image }}" || true
+          gh release upload "$TAG" /tmp/parts/* --clobber
