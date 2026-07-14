@@ -2,6 +2,7 @@
 # Builds GoodJob backend directly from Gitee source inside GitHub Actions.
 ARG SOURCE_REPO=https://gitee.com/sendoh-huang/GoodJob.git
 ARG SOURCE_REF=master
+ARG SOURCE_REV=unknown
 
 FROM node:20-bookworm-slim AS source
 ARG SOURCE_REPO
@@ -24,6 +25,12 @@ COPY --from=source /src .
 RUN npm run build --workspace backend
 
 FROM node:20-bookworm-slim AS runtime
+ARG SOURCE_REPO
+ARG SOURCE_REF
+ARG SOURCE_REV
+LABEL org.opencontainers.image.source="${SOURCE_REPO}" \
+      org.opencontainers.image.revision="${SOURCE_REV}" \
+      org.opencontainers.image.ref.name="${SOURCE_REF}"
 WORKDIR /app
 ENV NODE_ENV=production \
     CRM_STORE=mysql \
