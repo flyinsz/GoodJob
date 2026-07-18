@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import * as XLSX from "xlsx";
 import { readFile } from "node:fs/promises";
+import { PNG } from "pngjs";
 
 async function loginWithCredentials(page: import("@playwright/test").Page, email: string, password: string, expectedName: string) {
   await page.goto("/");
@@ -103,8 +104,7 @@ function buildCustomerWorkbookBuffer(company: string) {
       "阶段": "询盘",
       "预计金额": 23000,
       "健康度": 74,
-      "下一提醒": "明天 11:00",
-      "企微绑定": "已绑定"
+      "下一提醒": "明天 11:00"
     }
   ]);
   const workbook = XLSX.utils.book_new();
@@ -632,6 +632,27 @@ test.describe("GoodJob CRM prototype pages", () => {
     const deleteCompanyA = `批量客户A-${runId}`;
     const deleteCompanyB = `批量客户B-${runId}`;
     await openView(page, "customers");
+
+    const wonCustomerRow = page.locator("#customers tbody tr", { hasText: "Evergreen GmbH" }).first();
+    await expect(wonCustomerRow.locator(".customer-value-cell")).toContainText("A");
+    await expect(wonCustomerRow.locator(".customer-value-cell")).toContainText("已成交 1 次");
+    await wonCustomerRow.locator("[data-open-customer-page]").click();
+    await expect(page.locator("#customer-detail")).toHaveClass(/active/);
+    await expect(page.locator("#customerDetailPage")).toContainText("客户信息");
+    await expect(page.locator("#customerDetailPage")).toContainText("Evergreen GmbH 复购订单");
+    await expect(page.locator("#customerDetailPage")).toContainText("跟进记录");
+    await expect(page.locator("#customerDetailPage")).toContainText("联系中心");
+    const whatsappAction = page.locator("#customerDetailPage [data-customer-contact='whatsapp']");
+    const wechatAction = page.locator("#customerDetailPage [data-customer-contact='wechat']");
+    await expect(whatsappAction).not.toHaveClass(/is-ready/);
+    await expect(whatsappAction).toContainText("去绑定");
+    await expect(wechatAction).not.toHaveClass(/is-ready/);
+    await expect(wechatAction).toContainText("企业微信 · 待接入");
+    await whatsappAction.click();
+    await expect(page.locator(".toast").last()).toContainText("WhatsApp 联系适配器已预留");
+    await page.locator("#customerDetailPage [data-customer-page-back]").click();
+    await expect(page.locator("#customers")).toHaveClass(/active/);
+
     const activeCustomerRow = page.locator("#customers tbody tr", { hasText: "Nordic Tools AB" }).first();
     await expect(activeCustomerRow.locator(".customer-name")).toHaveClass(/has-active-deal/);
     await activeCustomerRow.locator("td").nth(2).click();
@@ -662,25 +683,37 @@ test.describe("GoodJob CRM prototype pages", () => {
 
     await page.locator("#customerDrawer [data-edit-customer-drawer]").click();
     await page.locator("#customerCompanyInput").fill(companyEdited);
+    await page.locator("#customerGradeInput").selectOption("B");
+    await page.locator("#customerHealthInput").fill("66");
     await page.locator("#customerReminderInput").fill("明天 18:00");
-    await page.locator("#customerWecomInput").selectOption("true");
     await page.locator("#saveCustomerButton").click();
     await expect(page.locator(".toast").last()).toContainText("客户已保存");
     await expect(page.locator("#customers tbody")).toContainText(companyEdited);
     await expect(page.locator("#customerDrawer")).toContainText("明天 18:00");
+    await expect(page.locator("#customerDrawer")).toContainText("B · 重点");
+    await expect(page.locator("#customerDrawer")).toContainText("66%");
+
+    await page.locator("#customerDrawer [data-open-customer-page]").click();
+    await expect(page.locator("#customer-detail")).toHaveClass(/active/);
+    await expect(page.locator("#customerDetailPage")).toContainText("B · 重点");
+    await expect(page.locator("#customerDetailPage")).toContainText("尚未成交");
+    await expect(page.locator("#customerDetailPage")).toContainText("健康度说明");
 
     const followContent = `确认参数与报价-${runId}`;
-    await page.locator("#customerDrawer [data-add-follow]").click();
+    await page.locator("#customerDetailPage [data-customer-page-follow]").first().click();
     await page.locator("#customerFollowType").selectOption("email");
     await page.locator("#customerFollowContent").fill(followContent);
     await page.locator("#customerFollowNext").fill("后天 10:30");
     await page.locator("#saveCustomerFollowButton").click();
-    await expect(page.locator("#customerDrawer .timeline")).toContainText(followContent);
-    await expect(page.locator("#customerDrawer")).toContainText("后天 10:30");
+    await expect(page.locator("#customer-detail")).toHaveClass(/active/);
+    await expect(page.locator("#customerDetailPage .customer-page-followups")).toContainText(followContent);
+    await expect(page.locator("#customerDetailPage")).toContainText("后天 10:30");
     await page.reload();
     await openView(page, "customers");
     await page.locator("#customers tbody tr", { hasText: companyEdited }).first().locator(".customer-name").click();
     await expect(page.locator("#customerDrawer .timeline")).toContainText(followContent);
+    await expect(page.locator("#customerDrawer")).toContainText("B · 重点");
+    await expect(page.locator("#customerDrawer")).toContainText("66%");
     await page.locator("#customerDrawerClose").click();
 
     for (const name of [deleteCompanyA, deleteCompanyB]) {
@@ -725,6 +758,175 @@ test.describe("GoodJob CRM prototype pages", () => {
     await expect(page.locator("#customerDrawer")).toHaveClass(/open/);
     const drawerBox = await page.locator("#customerDrawer").boundingBox();
     expect(drawerBox?.width).toBeLessThanOrEqual(390);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await page.locator("#customerDrawer [data-open-customer-page]").click();
+    await expect(page.locator("#customer-detail")).toHaveClass(/active/);
+    await expect(page.locator("#customerDetailPage .customer-page-summary")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  });
+
+  test("customer map renders, rotates and opens regional customers", async ({ page }) => {
+    await apiFromPage(page, "/api/customers", {
+      method: "POST",
+      body: {
+        company: `Taiwan Region Customer ${runId}`,
+        country: "中国台湾",
+        contact: "Regional Buyer",
+        stage: "询盘",
+        amount: 12000,
+        health: 76,
+        grade: "B"
+      }
+    });
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-authenticated/);
+    await openView(page, "customers");
+    await page.locator("#customerMapModeButton").click();
+    await expect(page.locator("#customerMapWorkspace")).toBeVisible();
+    await expect(page.locator("#customerListWorkspace")).toBeHidden();
+    const canvas = page.locator("#customerGlobe canvas");
+    await expect(canvas).toBeVisible({ timeout: 15_000 });
+    expect(await page.evaluate(async () => (await fetch("/assets/map/earth-blue-marble.jpg")).ok)).toBeTruthy();
+    await expect(page.locator("#customerMapSummary")).toContainText("客户");
+    await expect(page.locator('[data-map-market-country="中国"]')).toBeVisible();
+    await expect(page.locator("#customerMapRegion")).not.toContainText("台湾");
+
+    const desktopBox = await canvas.boundingBox();
+    expect(desktopBox?.width).toBeGreaterThan(500);
+    expect(desktopBox?.height).toBeGreaterThan(500);
+    const firstFrame = PNG.sync.read(await canvas.screenshot());
+    await page.waitForTimeout(900);
+    const secondFrame = PNG.sync.read(await canvas.screenshot());
+    const colors = new Set<string>();
+    let changedPixels = 0;
+    for (let index = 0; index < firstFrame.data.length; index += 64) {
+      colors.add(`${firstFrame.data[index]}:${firstFrame.data[index + 1]}:${firstFrame.data[index + 2]}`);
+      if (Math.abs(firstFrame.data[index] - secondFrame.data[index]) > 4
+        || Math.abs(firstFrame.data[index + 1] - secondFrame.data[index + 1]) > 4
+        || Math.abs(firstFrame.data[index + 2] - secondFrame.data[index + 2]) > 4) changedPixels += 1;
+    }
+    expect(colors.size).toBeGreaterThan(25);
+    expect(changedPixels).toBeGreaterThan(100);
+
+    await page.locator('[data-map-market-country="中国"]').click();
+    await expect(page.locator("#customerMapRegion")).toContainText("中国");
+    await expect(page.locator("#customerMapRegion")).toContainText(`Taiwan Region Customer ${runId}`);
+    await expect(page.locator("#customerMapRegion")).not.toContainText("台湾");
+    await page.locator("#customerMapRegion [data-customer-map-reset]").click();
+    await page.locator('[data-map-market-country="德国"]').click();
+    await expect(page.locator("#customerMapRegion")).toContainText("德国");
+    await expect(page.locator("#customerMapRegion")).toContainText("Evergreen GmbH");
+    await page.locator('#customerMapRegion [data-map-customer-id]').first().click();
+    await expect(page.locator("#customer-detail")).toHaveClass(/active/);
+    await expect(page.locator("#customerDetailPage")).toContainText("Evergreen GmbH");
+    await page.locator("#customerDetailPage [data-customer-page-back]").click();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("#customerMapWorkspace")).toBeVisible();
+    await expect(canvas).toBeVisible();
+    const mobileBox = await canvas.boundingBox();
+    expect(mobileBox?.width).toBeLessThanOrEqual(390);
+    expect(mobileBox?.height).toBeGreaterThanOrEqual(420);
+    const mobileFrame = PNG.sync.read(await canvas.screenshot());
+    const mobileColors = new Set<string>();
+    for (let index = 0; index < mobileFrame.data.length; index += 64) {
+      mobileColors.add(`${mobileFrame.data[index]}:${mobileFrame.data[index + 1]}:${mobileFrame.data[index + 2]}`);
+    }
+    expect(mobileColors.size).toBeGreaterThan(25);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  });
+
+  test("AI background research works for leads and customers", async ({ page }) => {
+    await openView(page, "leads");
+    const leadRow = page.locator("#leadsTableBody tr", { hasText: "Example Lighting GmbH" }).first();
+    await leadRow.locator("[data-open-lead]").click();
+    await expect(page.locator("#leadDrawer")).toHaveClass(/open/);
+    await page.locator("#leadAiResearchButton").click();
+    await expect(page.locator("#ai-research")).toHaveClass(/active/);
+    await expect(page.locator("#aiResearchPage")).toContainText("Example Lighting GmbH");
+    await expect(page.locator("#aiResearchPage .research-verdict")).toBeVisible();
+    await expect(page.locator("#aiResearchPage")).toContainText("业务机会");
+    await expect(page.locator("#aiResearchPage")).toContainText("风险核验");
+    await expect(page.locator("#aiResearchPage")).toContainText("公司事实");
+    await expect(page.locator("#aiResearchPage")).toContainText("关键联系人");
+    await expect(page.locator("#aiResearchPage")).toContainText("证据来源");
+    await expect(page.locator("#aiResearchPage .badge")).toHaveCount(0);
+    await page.locator("#aiResearchPage [data-research-back]").click();
+    await expect(page.locator("#leads")).toHaveClass(/active/);
+
+    await openView(page, "customers");
+    const customerRow = page.locator("#customers tbody tr", { hasText: "Evergreen GmbH" }).first();
+    await customerRow.locator("[data-open-customer-page]").click();
+    await page.locator("#customerDetailPage [data-customer-page-research]").click();
+    await expect(page.locator("#ai-research")).toHaveClass(/active/);
+    await expect(page.locator("#aiResearchPage .research-verdict")).toBeVisible();
+    await expect(page.locator("#aiResearchPage")).toContainText("Evergreen GmbH");
+    await expect(page.locator("#aiResearchPage")).toContainText("成交记录");
+    await expect(page.locator("#aiResearchPage .badge")).toHaveCount(0);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("#aiResearchPage .research-layout")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    await page.locator("#aiResearchPage [data-research-back]").click();
+    await expect(page.locator("#customer-detail")).toHaveClass(/active/);
+  });
+
+  test("development email studio checks configuration, drafts and sends", async ({ page }) => {
+    await openView(page, "leads");
+    await page.locator("#leadsTableBody tr", { hasText: "Example Lighting GmbH" }).first().locator("[data-open-lead]").click();
+    await page.locator("#leadDevelopmentEmailButton").click();
+    await expect(page.locator("#development-email")).toHaveClass(/active/);
+    await expect(page.locator("#developmentEmailPage .mail-studio-editor")).toBeVisible();
+    await expect(page.locator("#developmentEmailSubject")).not.toHaveValue("");
+    await expect(page.locator("#developmentEmailBody")).toContainText("Example Lighting GmbH");
+    await expect(page.locator("#developmentEmailPage .mail-readiness.missing")).toHaveCount(3);
+    await expect(page.locator("#developmentEmailPage [data-mail-ai]")).toContainText("配置 AI");
+    await expect(page.locator("#developmentEmailPage [data-mail-send]")).toBeDisabled();
+    await expect(page.locator("#developmentEmailPage .badge")).toHaveCount(0);
+    await page.locator("#developmentEmailPage [data-mail-config='profile']").click();
+    await expect(page.locator("#profile")).toHaveClass(/active/);
+    await expect(page.locator("#profileDevelopmentEmailReady")).toHaveClass(/missing/);
+
+    await apiFromPage(page, "/api/auth/logout", { method: "POST" });
+    await page.reload();
+    await loginAsAdmin(page);
+    await apiFromPage(page, "/api/profile/email-binding", {
+      method: "PATCH",
+      body: {
+        outboundEmail: "admin.sender@example.com",
+        emailSenderName: "Admin Sales",
+        emailSignature: "Best regards,\nAdmin Sales\nGoodJob Export",
+        smtpHost: "smtp.example.com",
+        smtpPort: 465,
+        smtpSecure: true,
+        smtpUser: "admin.sender@example.com",
+        smtpPassword: "test-app-password",
+        clearSmtpPassword: false
+      }
+    });
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-authenticated/);
+    await openView(page, "settings");
+    await page.locator("#companyProfileName").fill("GoodJob Export Ltd.");
+    await page.locator("#companyProfileWebsite").fill("https://goodjob.example.com");
+    await page.locator("#companyProfileEmail").fill("sales@goodjob.example.com");
+    await page.locator("#companyProfileProducts").fill("industrial lighting and export sourcing solutions");
+    await page.locator("#companyProfilePhone").fill("+86 755 0000 0000");
+    await page.locator("#companyProfileAddress").fill("Shenzhen, China");
+    await page.locator("#companyProfileSaveButton").click();
+    await expect(page.locator(".toast").last()).toContainText("公司资料已保存");
+
+    await openView(page, "leads");
+    await page.locator("#leadsTableBody tr", { hasText: "Example Lighting GmbH" }).first().locator("[data-open-lead]").click();
+    await page.locator("#leadDevelopmentEmailButton").click();
+    await expect(page.locator("#developmentEmailPage .mail-readiness.ready")).toHaveCount(2);
+    await page.locator("#developmentEmailSubject").fill(`Cooperation proposal ${runId}`);
+    await page.locator("#developmentEmailNext").fill("3 天后");
+    await expect(page.locator("#developmentEmailPage [data-mail-send]")).toBeEnabled();
+    await page.locator("#developmentEmailPage [data-mail-send]").click();
+    await expect(page.locator(".toast").last()).toContainText("开发信已发送");
+
+    await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   });
 
@@ -1463,32 +1665,23 @@ test.describe("GoodJob CRM prototype pages", () => {
     expect(leads.leads.some((lead) => lead.company === editedCompany)).toBe(true);
   });
 
-  test("tools website scraping creates editable opportunities", async ({ page }) => {
+  test("tools website reference registration creates editable opportunities without parsing pages", async ({ page }) => {
     await openView(page, "tools");
     const websiteCompany = `example-supplier-${runId}`;
-    await expect(page.locator("#aiConfigBadge")).toContainText(/规则解析|AI/);
-    await page.locator("#aiConfigName").fill("自动化AI官网解析");
-    await page.locator("#aiModelInput").fill("gpt-4o-mini");
-    await page.locator("#aiEnabledInput").uncheck();
-    const aiConfigResponse = page.waitForResponse((response) =>
-      response.url().includes("/api/tools/ai-config") &&
-      response.request().method() === "POST"
-    );
-    await page.locator("#aiSaveButton").click();
-    const savedAiConfig = await aiConfigResponse;
-    expect(savedAiConfig.ok()).toBe(true);
-    expect((await savedAiConfig.json()).config.enabled).toBe(false);
-    await page.locator("#websiteUseAiInput").check();
     await page.locator("#websiteUrlInput").fill(`https://example.com/${websiteCompany}`);
-    await page.locator("#tools .section-head .btn", { hasText: "解析官网" }).click();
-    const aiToast = await page.locator(".toast").last().textContent();
-    if (aiToast?.includes("请先保存并启用 AI 配置")) {
-      await page.locator("#websiteUseAiInput").uncheck();
-      await page.locator("#tools .section-head .btn", { hasText: "解析官网" }).click();
-    }
-    await expect(page.locator("#websiteOpportunityRows")).toContainText("example");
-    await expect(page.locator("#websiteOpportunityRows")).toContainText("规则解析");
+    const registrationRequest = page.waitForRequest((request) =>
+      request.url().includes("/api/tools/website-scrape/preview")
+      && request.method() === "POST"
+    );
+    await page.locator("#websiteReferenceRegisterButton").click();
+    const posted = (await registrationRequest).postDataJSON();
+    expect(posted).toEqual({ urls: [`https://example.com/${websiteCompany}`] });
+    await expect(page.locator(".toast").last()).toContainText("未访问企业网页");
+    await expect(page.locator("#websiteOpportunityRows")).toContainText("链接登记");
     const websiteRow = page.locator("#websiteOpportunityRows tr[data-website-opportunity-id]").first();
+    await expect(
+      websiteRow.locator("[data-website-field='website']")
+    ).toHaveValue(`https://example.com/${websiteCompany}`);
     const websiteCandidateId = await websiteRow.getAttribute("data-website-opportunity-id");
     expect(websiteCandidateId).toBeTruthy();
     const websiteContactInfo = `buyer.website.${runId}@example.com`;
@@ -1512,7 +1705,7 @@ test.describe("GoodJob CRM prototype pages", () => {
       method: "PATCH",
       body: { ids: [websiteCandidateId], action: "mark-contactable" }
     });
-    await page.locator("#tools .btn.primary", { hasText: "加入线索中心" }).click();
+    await page.locator("#websiteReferenceSyncButton").click();
     await expect(page.locator(".toast").last()).toContainText("已加入 1 条线索");
     await openView(page, "leads");
     await expect(page.locator("#leadsTableBody")).toContainText(`官网商机-${runId}`);
@@ -1654,6 +1847,452 @@ test.describe("GoodJob CRM prototype pages", () => {
     await expect(page.locator("body")).not.toHaveClass(/lead-drawer-open/);
   });
 
+  test("lead finder distinguishes ready, disabled, and unconfigured sources", async ({ page }) => {
+    const providerBase = {
+      tier: "free",
+      category: "company",
+      requiresKey: false,
+      capabilities: ["company"],
+      docsUrl: "",
+      keyHint: "",
+      defaultBaseUrl: "",
+      costNote: "测试来源",
+      hasApiKey: false,
+      lastTestStatus: "passed",
+      lastTestMessage: "",
+      lastTestAt: "",
+      usage: ""
+    };
+    await page.route("**/api/lead-finder/providers", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          providers: [
+            {
+              ...providerBase,
+              id: "ai_search",
+              name: "AI 搜索",
+              tier: "ai",
+              category: "ai",
+              ready: false,
+              enabled: false
+            },
+            {
+              ...providerBase,
+              id: "gleif",
+              name: "GLEIF",
+              ready: true,
+              enabled: false
+            },
+            {
+              ...providerBase,
+              id: "wikidata",
+              name: "Wikidata",
+              ready: true,
+              enabled: true
+            }
+          ]
+        })
+      });
+    });
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-authenticated/);
+    await openView(page, "lead-finder");
+
+    const aiChip = page.locator("[data-lead-provider='ai_search']");
+    const disabledChip = page.locator("[data-lead-provider='gleif']");
+    const readyChip = page.locator("[data-lead-provider='wikidata']");
+    await expect(aiChip).toContainText("未配置");
+    await expect(aiChip).toHaveClass(/needkey/);
+    await expect(disabledChip).toContainText("已停用");
+    await expect(disabledChip).toHaveClass(/disabled/);
+    await expect(disabledChip).not.toHaveClass(/active/);
+    await expect(readyChip).toContainText("内置");
+    await expect(readyChip).toHaveClass(/active/);
+
+    await disabledChip.click();
+    await expect(page.locator(".toast").last()).toContainText("已停用，暂不能用于搜索");
+    await expect(disabledChip).not.toHaveClass(/active/);
+
+    await aiChip.click();
+    await expect(page.locator("#ai-config")).toHaveClass(/active/);
+    await expect(page.locator(".toast").last()).toContainText("启用模型");
+
+    await openView(page, "lead-finder");
+    await readyChip.click();
+    await expect(readyChip).not.toHaveClass(/active/);
+    let searchRequests = 0;
+    await page.route("**/api/lead-finder/search", async (route) => {
+      searchRequests += 1;
+      await route.abort();
+    });
+    await page.locator("#leadFinderStartButton").click();
+    await expect(page.locator(".toast").last()).toContainText("请至少选择一个已启用的数据源");
+    expect(searchRequests).toBe(0);
+  });
+
+  test("lead finder shows net-new and repeated-search statistics", async ({ page }) => {
+    await page.route("**/api/lead-finder/providers", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          providers: [{
+            id: "gleif",
+            name: "GLEIF",
+            tier: "free",
+            category: "company",
+            requiresKey: false,
+            capabilities: ["company"],
+            docsUrl: "",
+            keyHint: "",
+            defaultBaseUrl: "",
+            costNote: "免费官方来源",
+            hasApiKey: false,
+            ready: true,
+            enabled: true,
+            lastTestStatus: "passed",
+            lastTestMessage: "",
+            lastTestAt: "",
+            usage: ""
+          }]
+        })
+      });
+    });
+    await page.route("**/api/lead-finder/search", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          opportunities: [{
+            id: `lf_incremental_${runId}`,
+            company: "Incremental Evidence GmbH",
+            business: "Industrial lighting",
+            country: "德国",
+            website: "https://incremental-evidence.example",
+            contact: "待维护",
+            contactInfo: "",
+            description: "已知企业新增一条有效证据",
+            ownerId: "u_manager_alex",
+            teamId: "europe",
+            status: "preview",
+            createdAt: new Date().toISOString(),
+            parseMode: "rule",
+            source: "gleif",
+            sourceLabel: "GLEIF",
+            sourceEvidence: []
+          }],
+          sourceStats: [{ id: "gleif", name: "GLEIF", count: 2, status: "success" }],
+          incrementalStats: {
+            rawCount: 3,
+            returnedCount: 1,
+            deduplicatedCount: 1,
+            newCount: 0,
+            evidenceUpdatedCount: 1,
+            multiSourceMergedCount: 1,
+            unchangedCount: 1,
+            excludedCount: 0
+          },
+          skipped: [],
+          providersUsed: ["gleif"],
+          runId: `run_incremental_${runId}`
+        })
+      });
+    });
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-authenticated/);
+    await openView(page, "lead-finder");
+    await page.locator("#leadFinderUrlInput").fill("");
+    await page.locator("#leadFinderStartButton").click();
+
+    await expect(page.locator(".toast").last()).toContainText("本次命中 1 条：净新增 0 · 新证据 1 · 历史未变化 1 · 同批去重 1");
+    const jobCard = page.locator("#leadFinderJobList .lead-job-card").first();
+    await expect(jobCard).toContainText("净新增 / 命中");
+    await expect(jobCard).toContainText("0 / 1");
+    await jobCard.locator("[data-lead-job-toggle]").click();
+    await expect(jobCard).toContainText("原始命中 3 条");
+    await expect(jobCard).toContainText("多来源合并 1 条");
+  });
+
+  test("lead finder keeps long source labels inside their result column", async ({ page }) => {
+    await page.route("**/api/tools/website-opportunities", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          opportunities: [{
+            id: `lf_long_source_${runId}`,
+            company: "Federal Lighting Distribution Group",
+            business: "LED lighting distribution and federal contract supply",
+            country: "United States",
+            website: "",
+            contact: "采购/合同部门",
+            contactInfo: "",
+            description: "长来源名称布局回归测试",
+            ownerId: "u_manager_alex",
+            teamId: "europe",
+            status: "preview",
+            createdAt: new Date().toISOString(),
+            parseMode: "rule",
+            source: "usaspending_awards",
+            sourceLabel: "USAspending 联邦采购官方公开数据来源",
+            sourceEvidence: []
+          }]
+        })
+      });
+    });
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-authenticated/);
+    await openView(page, "lead-finder");
+
+    const row = page.locator("#leadFinderResultRows tr[data-lead-id]").first();
+    const sourceCell = row.locator("td").nth(2);
+    const businessCell = row.locator("td").nth(3);
+    const sourceTag = sourceCell.locator(".lead-src-tag");
+    const [sourceBox, businessBox, tagBox] = await Promise.all([
+      sourceCell.boundingBox(),
+      businessCell.boundingBox(),
+      sourceTag.boundingBox()
+    ]);
+
+    expect(sourceBox).not.toBeNull();
+    expect(businessBox).not.toBeNull();
+    expect(tagBox).not.toBeNull();
+    expect(sourceBox!.x + sourceBox!.width).toBeLessThanOrEqual(businessBox!.x + 0.5);
+    expect(tagBox!.x + tagBox!.width).toBeLessThanOrEqual(sourceBox!.x + sourceBox!.width + 0.5);
+    await expect(sourceTag).toHaveAttribute("title", "USAspending 联邦采购官方公开数据来源");
+  });
+
+  test("lead finder keeps partial results and handles request failures locally", async ({ page }) => {
+    const providers = ["gleif", "wikidata"].map((id) => ({
+      id,
+      name: id === "gleif" ? "GLEIF" : "Wikidata",
+      tier: "free",
+      category: "company",
+      requiresKey: false,
+      capabilities: ["company"],
+      docsUrl: "",
+      keyHint: "",
+      defaultBaseUrl: "",
+      costNote: "免费官方来源",
+      hasApiKey: false,
+      ready: true,
+      enabled: true,
+      lastTestStatus: "passed",
+      lastTestMessage: "",
+      lastTestAt: "",
+      usage: ""
+    }));
+    await page.route("**/api/lead-finder/providers", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ providers })
+      });
+    });
+    let searchAttempt = 0;
+    await page.route("**/api/lead-finder/search", async (route) => {
+      searchAttempt += 1;
+      if (searchAttempt > 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "服务暂时不可用，请稍后重试" })
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          opportunities: [{
+            id: `lf_partial_${runId}`,
+            company: "Partial Result GmbH",
+            business: "Industrial lighting",
+            country: "德国",
+            website: "https://partial-result.example",
+            contact: "待维护",
+            contactInfo: "",
+            description: "来自成功来源的候选",
+            ownerId: "u_manager_alex",
+            teamId: "europe",
+            status: "preview",
+            createdAt: new Date().toISOString(),
+            parseMode: "rule",
+            source: "gleif",
+            sourceLabel: "GLEIF",
+            sourceEvidence: []
+          }],
+          sourceStats: [
+            { id: "gleif", name: "GLEIF", count: 1, status: "success" },
+            {
+              id: "wikidata",
+              name: "Wikidata",
+              count: 0,
+              status: "failed",
+              error: "请求频率过高",
+              errorCode: "PROVIDER_RATE_LIMITED",
+              retryable: true,
+              retryAfterAt: new Date(Date.now() + 60_000).toISOString()
+            }
+          ],
+          incrementalStats: {
+            rawCount: 1,
+            returnedCount: 1,
+            deduplicatedCount: 0,
+            newCount: 1,
+            evidenceUpdatedCount: 0,
+            multiSourceMergedCount: 0,
+            unchangedCount: 0,
+            excludedCount: 0
+          },
+          skipped: [],
+          providersUsed: ["gleif", "wikidata"],
+          runId: `run_partial_${runId}`
+        })
+      });
+    });
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-authenticated/);
+    await openView(page, "lead-finder");
+    const startButton = page.locator("#leadFinderStartButton");
+
+    await startButton.click();
+    await expect(page.locator(".toast").last()).toContainText("部分来源执行失败");
+    let jobCard = page.locator("#leadFinderJobList .lead-job-card").first();
+    await expect(jobCard).toContainText("部分完成");
+    await jobCard.locator("[data-lead-job-toggle]").click();
+    await expect(jobCard).toContainText("GLEIF");
+    await expect(jobCard).toContainText("1 条 · 执行成功");
+    await expect(jobCard).toContainText("Wikidata");
+    await expect(jobCard).toContainText("请求频率过高");
+    await expect(jobCard).toContainText("后可重试");
+
+    await startButton.click();
+    await expect(page.locator(".toast").last()).toContainText("搜客任务失败：服务暂时不可用，请稍后重试");
+    jobCard = page.locator("#leadFinderJobList .lead-job-card").first();
+    await expect(jobCard).toContainText("执行失败");
+    await expect(startButton).toBeEnabled();
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("lead finder restores sync controls when adding leads fails", async ({ page }) => {
+    await page.route("**/api/tools/website-scrape/preview", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          opportunities: [{
+            id: `lf_sync_failure_${runId}`,
+            company: "Sync Failure GmbH",
+            business: "Industrial lighting",
+            country: "德国",
+            website: `https://sync-failure-${runId}.example`,
+            contact: "Verified Buyer",
+            contactInfo: `buyer-${runId}@example.test`,
+            description: "用于验证加入线索失败反馈",
+            ownerId: "u_manager_alex",
+            teamId: "europe",
+            status: "contactable",
+            createdAt: new Date().toISOString(),
+            verifiedAt: new Date().toISOString(),
+            statusChangedAt: new Date().toISOString(),
+            parseMode: "reference",
+            source: "website-reference",
+            sourceLabel: "官网链接登记",
+            sourceEvidence: []
+          }]
+        })
+      });
+    });
+    await page.route("**/api/tools/website-scrape/sync-opportunities", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "线索服务暂时不可用" })
+      });
+    });
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await openView(page, "lead-finder");
+    await page.locator("#leadFinderUrlInput").fill(`https://sync-failure-${runId}.example`);
+    await page.locator("#leadFinderStartButton").click();
+    const row = page.locator(`#leadFinderResultRows tr[data-lead-id="lf_sync_failure_${runId}"]`);
+    await expect(row).toBeVisible();
+    await row.locator("[data-lead-select]").check();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    const syncButton = page.locator("#leadFinderSyncButton");
+    await syncButton.click();
+    await expect(page.locator(".toast").last()).toContainText("加入线索失败：线索服务暂时不可用");
+    await expect(syncButton).toBeEnabled();
+    await expect(syncButton).toContainText("加入线索中心");
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("provider connection test shows structured retry feedback", async ({ page }) => {
+    const provider = {
+      id: "serper",
+      name: "Serper (Google)",
+      tier: "byok_free",
+      category: "web",
+      requiresKey: true,
+      capabilities: ["web"],
+      docsUrl: "",
+      keyHint: "测试 Key",
+      defaultBaseUrl: "https://google.serper.dev",
+      costNote: "自带 Key",
+      hasApiKey: true,
+      ready: true,
+      enabled: true,
+      lastTestStatus: "passed",
+      lastTestMessage: "此前连接通过",
+      lastTestAt: "",
+      usage: ""
+    };
+    await page.route("**/api/lead-finder/providers", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ providers: [provider] })
+      });
+    });
+    await page.route("**/api/lead-finder/source-config/test", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          message: "连接异常：数据源当前限流，可稍后重试",
+          usage: "",
+          errorCode: "PROVIDER_RATE_LIMITED",
+          retryable: true,
+          retryAfterAt: "2099-01-01T08:30:00.000Z",
+          providers: [{
+            ...provider,
+            lastTestStatus: "failed",
+            lastTestMessage: "连接异常：数据源当前限流，可稍后重试",
+            lastTestAt: new Date().toISOString()
+          }]
+        })
+      });
+    });
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/is-authenticated/);
+    await openView(page, "lead-finder");
+    await page.locator("#leadSourceCenterButton").click();
+    const testButton = page.locator("[data-ls-test='serper']");
+    await expect(testButton).toBeVisible();
+    await testButton.click();
+    await expect(page.locator(".toast").last()).toContainText("数据源当前限流");
+    await expect(page.locator(".toast").last()).toContainText("后可重试");
+    await expect(testButton).toBeEnabled();
+  });
+
   test("lead finder page searches candidates and links to CRM workflow", async ({ page }) => {
     const company = `leadfinder-${runId}`;
     await expect(page.locator(".nav button[data-view='dashboard'] + button[data-view='lead-finder']")).toBeVisible();
@@ -1661,7 +2300,9 @@ test.describe("GoodJob CRM prototype pages", () => {
     await expect(page.locator("#lead-finder .page-head")).toContainText("自动获客");
     await expect(page.locator("#leadFinderSearchLinks a").first()).toContainText(/product supplier|OEM product/);
     await expect(page.locator(".lead-advanced-settings")).toHaveAttribute("open", "");
-    await expect(page.locator(".lead-queue-panel")).toHaveAttribute("open", "");
+    await expect(page.locator(".lead-queue-panel")).toBeVisible();
+    await expect(page.locator(".lead-queue-panel")).toContainText("自动更新");
+    await expect(page.locator(".lead-support-panel")).not.toHaveAttribute("open", "");
 
     await page.locator("#leadFinderUrlInput").fill(`https://example.org/${company}`);
     await page.route("**/api/tools/website-scrape/preview", async (route) => {
@@ -1671,48 +2312,57 @@ test.describe("GoodJob CRM prototype pages", () => {
     await page.locator("#leadFinderStartButton").click();
     const jobCard = page.locator("#leadFinderJobList .lead-job-card").first();
     await expect(jobCard).toContainText("进行中");
+    await jobCard.locator("[data-lead-job-open]").click();
+    await expect(page.locator("#lead-task-detail")).toHaveClass(/active/);
+    await expect(page.locator("#leadTaskDetailStatus")).toContainText(/进行中|已完成/);
+    await expect(page.locator("#leadTaskStream")).toContainText("客户画像与检索条件已解析");
+    await expect(page.locator("[data-lead-stream-mode='summary']")).toHaveClass(/active/);
+    await page.locator("[data-lead-stream-mode='verbose']").click();
+    await expect(page.locator("#leadTaskStream")).toHaveClass(/is-verbose/);
+    await expect(page.locator("#leadTaskStreamState")).toContainText("高速追踪");
+    await expect(page.locator("#leadTaskStream .task-run-log").nth(5)).toBeVisible({ timeout: 4_000 });
+    await expect(page.locator("#leadTaskStream")).toContainText(/读取任务运行修订|检查暂停与取消信号|同步本轮候选引用/);
+    await page.locator("[data-lead-stream-mode='summary']").click();
+    await expect(page.locator("#leadTaskStream")).not.toHaveClass(/is-verbose/);
+    await expect(page.locator("#leadTaskStream")).toContainText("客户画像与检索条件已解析");
+    await expect(page.locator("#lead-task-detail")).toContainText("当前收获");
+    await expect(page.locator("#lead-task-detail")).toContainText("清洗与分流");
+    await expect(page.locator("#leadTaskCleaned")).toContainText("域名或企业身份重复");
+    await page.locator("#leadTaskDetailBack").click();
+    await expect(page.locator("#lead-finder")).toHaveClass(/active/);
     await jobCard.locator("[data-lead-job-toggle]").click();
-    await expect(jobCard).toContainText("正在检索公开API");
+    await expect(jobCard).toContainText("检索公开API");
     await expect(page.locator("#leadFinderResultRows")).toContainText("example.org");
     await expect(page.locator("#leadFinderJobList")).toContainText("已完成");
     await expect(jobCard).toContainText("example.org");
     await expect(page.locator("#leadFinderPendingCount")).not.toHaveText("0");
 
     let firstRow = page.locator("#leadFinderResultRows tr[data-lead-id]").first();
-    await expect(firstRow.locator("[data-lead-select]")).not.toBeChecked();
-    await firstRow.locator("[data-lead-field='company']").fill(company);
-    await firstRow.locator("[data-lead-field='business']").fill("LED 工程灯 / 智能搜客测试");
-    await firstRow.locator("[data-lead-field='country']").fill("德国");
-    await firstRow.locator("[data-lead-field='contact']").fill("Lead Finder Buyer");
+    await expect(firstRow.locator("[data-lead-select]")).toBeDisabled();
     const leadFinderContactInfo = `buyer.leadfinder.${runId}@example.com`;
-    await firstRow.locator("[data-lead-field='contactInfo']").fill(leadFinderContactInfo);
     const leadFinderCandidateId = await firstRow.getAttribute("data-lead-id");
     expect(leadFinderCandidateId).toBeTruthy();
-    await apiFromPage(page, `/api/prospect-list/${encodeURIComponent(leadFinderCandidateId!)}/details`, {
-      method: "PATCH",
-      body: {
-        company,
-        business: "LED 工程灯 / 智能搜客测试",
-        country: "德国",
-        website: await firstRow.locator("[data-lead-field='website']").inputValue(),
-        contact: "Lead Finder Buyer",
-        contactInfo: leadFinderContactInfo,
-        description: await firstRow.locator("[data-lead-field='description']").inputValue()
-      }
-    });
-    await apiFromPage(page, "/api/prospect-list/batch", {
-      method: "PATCH",
-      body: { ids: [leadFinderCandidateId], action: "mark-contactable" }
-    });
-    await page.reload();
-    await openView(page, "lead-finder");
+    await firstRow.locator("[data-lead-field='business']").click();
+    await expect(page.locator("#leadFinderVerificationDrawer")).not.toHaveClass(/open/);
+    await firstRow.locator("[data-lead-company-open]").click();
+    await expect(page.locator("#leadFinderVerificationDrawer")).toHaveClass(/open/);
+    await page.locator("#leadFinderDetailCompany").fill(company);
+    await page.locator("#leadFinderDetailBusiness").fill("LED 工程灯 / 智能搜客测试");
+    await page.locator("#leadFinderDetailCountry").fill("德国");
+    await page.locator("#leadFinderDetailContact").fill("Lead Finder Buyer");
+    await page.locator("#leadFinderDetailContactInfo").fill(leadFinderContactInfo);
+    await expect(page.locator("#leadFinderDetail")).toContainText("来源与外部编号");
+    await expect(page.locator("#leadFinderDetail")).toContainText("重复与归属");
+    await expect(page.locator("#leadFinderDetail")).toContainText("来源证据");
+    await page.locator("#leadFinderDetailSaveButton").click();
+    await expect(page.locator(".toast").last()).toContainText("核验资料已保存");
+    await page.locator("#leadFinderDetailMarkButton").click();
+    await expect(page.locator(".toast").last()).toContainText("标记为可联系");
+    await page.locator("#leadFinderVerificationClose").click();
+    await expect(page.locator("#leadFinderVerificationDrawer")).not.toHaveClass(/open/);
     firstRow = page.locator(`#leadFinderResultRows tr[data-lead-id="${leadFinderCandidateId}"]`);
     await expect(firstRow.locator("[data-lead-select]")).toBeEnabled();
     await firstRow.locator("[data-lead-select]").check();
-    await firstRow.locator("[data-lead-pick]").evaluate((cell: HTMLElement) => cell.click());
-    await expect(page.locator("#leadFinderDetail")).toContainText(company);
-    await expect(page.locator("#leadFinderDetail")).toContainText("来源与外部编号");
-    await expect(page.locator("#leadFinderDetail")).toContainText("重复与归属");
 
     await page.locator("#leadFinderTodoButton").click();
     await expect(page.locator(".toast").last()).toContainText("请先确认并加入线索");
