@@ -92,5 +92,5 @@ jobs:
             org.opencontainers.image.source=${{ env.SOURCE_REPO }}
             org.opencontainers.image.revision=${{ steps.upstream.outputs.revision }}
             org.opencontainers.image.ref.name=${{ env.SOURCE_REF }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cache-from: type=gha,scope=${{ matrix.name }}-${{ steps.upstream.outputs.revision }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ steps.upstream.outputs.revision }}
