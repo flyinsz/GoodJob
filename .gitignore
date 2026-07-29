@@ -1,0 +1,7 @@
+node_modules/
+backend/dist/
+frontend/dist/
+whatsapp-plugin/dist/
+*.tsbuildinfo
+*.log
+.env

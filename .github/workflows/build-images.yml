@@ -2,17 +2,16 @@ name: Build GoodJob Docker Images
 
 on:
   workflow_dispatch:
-    inputs:
-      source_ref:
-        description: Gitee branch/tag/ref to build
-        required: false
-        default: master
   push:
     branches: [main]
     paths:
       - Dockerfile.backend
       - Dockerfile.frontend
       - docker/**
+      - backend/**
+      - frontend/**
+      - package.json
+      - package-lock.json
       - .github/workflows/build-images.yml
 
 permissions:
@@ -25,8 +24,8 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  SOURCE_REPO: https://gitee.com/sendoh-huang/GoodJob.git
-  SOURCE_REF: ${{ inputs.source_ref || 'master' }}
+  SOURCE_REPO: https://github.com/flyinsz/GoodJob.git
+  SOURCE_REF: main
 
 jobs:
   build:
@@ -45,16 +44,14 @@ jobs:
       - name: Checkout Docker wrapper repo
         uses: actions/checkout@v4
 
-      - name: Resolve upstream revision
+      - name: Resolve mirror revision
         id: upstream
         shell: bash
         run: |
           set -euo pipefail
-          tmpdir=$(mktemp -d)
-          git clone --depth=1 --branch "$SOURCE_REF" "$SOURCE_REPO" "$tmpdir"
-          rev=$(git -C "$tmpdir" rev-parse HEAD)
+          rev="${GITHUB_SHA}"
           echo "revision=$rev" >> "$GITHUB_OUTPUT"
-          echo "Upstream $SOURCE_REPO $SOURCE_REF -> $rev"
+          echo "Mirror $SOURCE_REPO $SOURCE_REF -> $rev"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
