@@ -1920,7 +1920,7 @@ export async function createMysqlStore(
   return store;
 }
 
-export const GOODJOB_MYSQL_SCHEMA_VERSION = "1.2.1-005";
+export const GOODJOB_MYSQL_SCHEMA_VERSION = "1.2.1-006";
 
 const MIGRATION_PROTECTED_TABLES = ["users", "customers", "leads", "deals"] as const;
 
@@ -1970,13 +1970,13 @@ async function migrateProspectRunQueueBindingHashes(pool: mysql.Pool) {
     `SELECT b.id, b.team_id, b.owner_id, b.run_id, b.shard_id,
             b.job_id, b.job_type, b.parent_job_id, b.bridge_version,
             r.execution_snapshot_hash, b.binding_hash
-     FROM prospect_run_queue_parent_bindings b
+     FROM prospect_run_queue_child_bindings b
      JOIN prospect_search_runs r ON r.id = b.run_id
      UNION ALL
-     SELECT b.id, b.team_id, b.owner_id, b.run_id, b.shard_id,
+     SELECT b.id, b.team_id, b.owner_id, b.run_id, NULL AS shard_id,
             b.job_id, b.job_type, b.parent_job_id, b.bridge_version,
             r.execution_snapshot_hash, b.binding_hash
-     FROM prospect_run_queue_child_bindings b
+     FROM prospect_run_queue_parent_bindings b
      JOIN prospect_search_runs r ON r.id = b.run_id`
   );
   const rows = rawRows as Array<{
