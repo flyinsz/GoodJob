@@ -83,7 +83,10 @@ import {
   sha256CanonicalJson
 } from "./prospect-provider-request-ledger.js";
 import { ProspectSourceRawError } from "./prospect-source-raw.js";
-import { validateAllProspectRunQueueBridges } from "./prospect-run-queue-bridge.js";
+import {
+  prospectRunQueueBindingHash,
+  validateAllProspectRunQueueBridges
+} from "./prospect-run-queue-bridge.js";
 import { CustomerOwnershipError } from "./customer-public-pool.js";
 import {
   createCredentialRef,
@@ -1962,6 +1965,63 @@ async function migrateProspectRunExecutionSnapshotHashes(pool: mysql.Pool) {
   return updated;
 }
 
+async function migrateProspectRunQueueBindingHashes(pool: mysql.Pool) {
+  const [rawRows] = await pool.query(
+    `SELECT b.id, b.team_id, b.owner_id, b.run_id, b.shard_id,
+            b.job_id, b.job_type, b.parent_job_id, b.bridge_version,
+            r.execution_snapshot_hash, b.binding_hash
+     FROM prospect_run_queue_parent_bindings b
+     JOIN prospect_search_runs r ON r.id = b.run_id
+     UNION ALL
+     SELECT b.id, b.team_id, b.owner_id, b.run_id, b.shard_id,
+            b.job_id, b.job_type, b.parent_job_id, b.bridge_version,
+            r.execution_snapshot_hash, b.binding_hash
+     FROM prospect_run_queue_child_bindings b
+     JOIN prospect_search_runs r ON r.id = b.run_id`
+  );
+  const rows = rawRows as Array<{
+    id: string;
+    team_id: string;
+    owner_id: string;
+    run_id: string;
+    shard_id: string | null;
+    job_id: string;
+    job_type: string;
+    parent_job_id: string;
+    bridge_version: "v1";
+    execution_snapshot_hash: string;
+    binding_hash: string;
+  }>;
+  let updated = 0;
+  for (const row of rows) {
+    const nextHash = prospectRunQueueBindingHash({
+      teamId: row.team_id,
+      ownerId: row.owner_id,
+      runId: row.run_id,
+      shardId: row.shard_id,
+      jobId: row.job_id,
+      jobType: row.job_type,
+      parentJobId: row.parent_job_id,
+      bridgeVersion: row.bridge_version,
+      executionSnapshotHash: row.execution_snapshot_hash
+    });
+    if (nextHash === row.binding_hash) continue;
+    const table = row.shard_id === null
+      ? "prospect_run_queue_parent_bindings"
+      : "prospect_run_queue_child_bindings";
+    const [result] = await pool.query(
+      `UPDATE ${table}
+       SET binding_hash = ?
+       WHERE id = ? AND binding_hash = ?`,
+      [nextHash, row.id, row.binding_hash]
+    );
+    if (Number((result as { affectedRows?: number }).affectedRows || 0) === 1) {
+      updated += 1;
+    }
+  }
+  return updated;
+}
+
 async function protectedMigrationRowCounts(pool: mysql.Pool) {
   const counts: Record<string, number> = {};
   for (const table of MIGRATION_PROTECTED_TABLES) {
@@ -2016,6 +2076,8 @@ export async function migrateMysqlSchema(input: {
     await ensureProspectQualificationSchema(pool);
     const executionSnapshotHashesUpdated =
       await migrateProspectRunExecutionSnapshotHashes(pool);
+    const queueBindingHashesUpdated =
+      await migrateProspectRunQueueBindingHashes(pool);
     const after = await mysqlSchemaStats(pool);
     const protectedAfter = await protectedMigrationRowCounts(pool);
     for (const [table, count] of Object.entries(protectedBefore)) {
@@ -2046,6 +2108,7 @@ export async function migrateMysqlSchema(input: {
       addedTables: Math.max(0, after.tables - before.tables),
       addedColumns: Math.max(0, after.columns - before.columns),
       executionSnapshotHashesUpdated,
+      queueBindingHashesUpdated,
       protectedRowsVerified: Object.keys(protectedBefore).length
     };
   } finally {
