@@ -18,6 +18,7 @@ function aiNetworkPolicy(rawBaseUrl: string): ProviderNetworkPolicy {
   return {
     allowedHosts: [baseUrl.hostname.toLocaleLowerCase()],
     allowedPathPrefixes: [basePath],
+    allowedPorts: ["443", "10128"],
     allowedMethods: ["POST"],
     timeoutMs: AI_HTTP_TIMEOUT_MS,
     maxResponseBytes: AI_MAX_RESPONSE_BYTES

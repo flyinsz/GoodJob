@@ -87,6 +87,7 @@ export interface ProviderNetworkPolicy {
   allowedHosts: string[];
   allowedPathPrefixes: string[];
   allowedPaths?: string[];
+  allowedPorts?: string[];
   allowedMethods: Array<"GET" | "HEAD" | "POST">;
   redirectHosts?: string[];
   maxRedirects?: number;

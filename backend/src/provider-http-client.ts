@@ -89,8 +89,9 @@ function validateTarget(rawUrl: string, policy: ProviderNetworkPolicy, redirect 
   } catch {
     throw policyError("数据源地址格式无效");
   }
-  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
-    throw policyError("数据源只允许使用不含账号密码的 HTTPS 标准端口");
+  const allowedPorts = policy.allowedPorts || ["443"];
+  if (url.protocol !== "https:" || url.username || url.password || !allowedPorts.includes(url.port || "443")) {
+    throw policyError("数据源只允许使用不含账号密码的 HTTPS 允许端口");
   }
   const hostname = normalizeNetworkHostname(url.hostname);
   if (isForbiddenNetworkHostname(hostname)) {
@@ -433,8 +434,9 @@ export function assertProviderBaseUrlAllowed(rawUrl: string, policy: ProviderNet
   } catch {
     throw policyError("数据源地址格式无效");
   }
-  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
-    throw policyError("数据源只允许使用不含账号密码的 HTTPS 标准端口");
+  const allowedPorts = policy.allowedPorts || ["443"];
+  if (url.protocol !== "https:" || url.username || url.password || !allowedPorts.includes(url.port || "443")) {
+    throw policyError("数据源只允许使用不含账号密码的 HTTPS 允许端口");
   }
   const hostname = normalizeNetworkHostname(url.hostname);
   if (isForbiddenNetworkHostname(hostname)) {

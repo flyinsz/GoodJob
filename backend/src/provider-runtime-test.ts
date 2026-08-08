@@ -461,6 +461,11 @@ const networkPolicy = {
   redirectHosts: ["download.example.com"]
 };
 assert.doesNotThrow(() => assertProviderBaseUrlAllowed("https://api.example.com/v1", networkPolicy));
+assert.throws(() => assertProviderBaseUrlAllowed("https://api.example.com:8443/v1", networkPolicy));
+assert.doesNotThrow(() => assertProviderBaseUrlAllowed(
+  "https://api.example.com:10128/v1",
+  { ...networkPolicy, allowedPorts: ["443", "10128"] }
+));
 assert.throws(() => assertProviderBaseUrlAllowed("https://evil.example/v1", networkPolicy));
 assert.throws(() => assertProviderBaseUrlAllowed("https://api.example.com/v1?token=secret", networkPolicy));
 assert.doesNotThrow(() => assertProviderRequestAllowed("https://api.example.com/v1/search", "GET", networkPolicy));
