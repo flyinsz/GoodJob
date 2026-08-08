@@ -301,7 +301,7 @@ async function requestOnce(
     const request = httpsRequest({
       protocol: "https:",
       hostname: requestHostname,
-      port: 443,
+      port: url.port || 443,
       method,
       path: `${url.pathname}${url.search}`,
       servername: isIP(requestHostname) ? undefined : requestHostname,
