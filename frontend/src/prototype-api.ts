@@ -22496,7 +22496,7 @@ async function launchProspectRunFromLeadFinder(
   return api<LeadFinderLaunchResult>("/api/lead-finder/launch", {
     method: "POST",
     headers: {
-      "Idempotency-Key": `lead-finder:${crypto.randomUUID()}`
+      "Idempotency-Key": `lead-finder:${prospectRequestId("lead-finder")}`
     },
     body: JSON.stringify({
       mode,

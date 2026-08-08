@@ -358,6 +358,7 @@ assert.equal(prototype.includes("id=\"composeMessageButton\""), false, "notifica
 assert.match(apiLayer, /data-pending-hit-id/, "待清洗结果必须支持逐条选择");
 assert.match(apiLayer, /selectedPendingHitIds/, "待清洗导入必须保留明确选择状态");
 assert.match(apiLayer, /prospect-super-search\/\$\{encodeURIComponent\(job\.superSearchMissionId\)\}\/pending-candidates/, "超级搜索必须汇总全部轮次待清洗结果");
+assert.match(apiLayer, /Idempotency-Key": `lead-finder:\$\{prospectRequestId\("lead-finder"\)\}`/, "自动搜客幂等键必须使用兼容随机 ID 生成器");
 assert.match(apiLayer, /body: JSON\.stringify\(\{ hitIds \}\)/, "手动导入只能提交已选择的原始记录");
 assert.equal(apiLayer.includes("lead-job-card is-openable"), false, "任务卡片不能整卡点击进入详情");
 assert.equal(apiLayer.includes("同步本任务结果"), false, "任务结果操作必须使用明确的候选与线索语义");
