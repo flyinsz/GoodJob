@@ -2011,9 +2011,10 @@ async function migrateProspectRunQueueBindingHashes(pool: mysql.Pool) {
       : "prospect_run_queue_child_bindings";
     const [result] = await pool.query(
       `UPDATE ${table}
-       SET binding_hash = ?
+       SET execution_snapshot_hash = ?,
+           binding_hash = ?
        WHERE id = ? AND binding_hash = ?`,
-      [nextHash, row.id, row.binding_hash]
+      [row.execution_snapshot_hash, nextHash, row.id, row.binding_hash]
     );
     if (Number((result as { affectedRows?: number }).affectedRows || 0) === 1) {
       updated += 1;
