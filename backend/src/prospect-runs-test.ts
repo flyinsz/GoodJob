@@ -27,6 +27,7 @@ import {
 import {
   createProspectRun,
   prospectRunDiagnostics,
+  prospectRunExecutionSnapshotHash,
   ProspectRunRequestError,
   transitionProspectRun,
   validateProspectRunSecurity
@@ -59,6 +60,16 @@ function testUser(id: string, teamId: string, role: Role): User {
 
 const store = getStore();
 let prospectExecutionMutationCalls = 0;
+
+function reverseObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseObjectKeys);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .reverse()
+      .map(([key, item]) => [key, reverseObjectKeys(item)])
+  );
+}
 
 function installSerializedRunMutationHarness() {
   let tail: Promise<unknown> = Promise.resolve();
@@ -198,6 +209,11 @@ const fullSnapshot = {
   exclusionRules: ["Consumer only"],
   sourceProviderIds: ["gleif"]
 };
+
+assert.equal(
+  prospectRunExecutionSnapshotHash(fullSnapshot as never),
+  prospectRunExecutionSnapshotHash(reverseObjectKeys(fullSnapshot) as never)
+);
 
 async function createReadyCampaign(input: {
   actor: User;

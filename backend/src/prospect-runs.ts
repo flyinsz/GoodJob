@@ -7,6 +7,7 @@ import {
 } from "node:crypto";
 import { z } from "zod";
 import { AI_SEARCH_ADAPTER_VERSION } from "./ai-search-provider.js";
+import { canonicalJsonStringify } from "./canonical-json.js";
 import { getProvider } from "./lead-providers.js";
 import { PROVIDER_CONTRACT_VERSION } from "./provider-contract.js";
 import { isActiveProspectRun } from "./prospect-run-guards.js";
@@ -176,7 +177,9 @@ function stableHash(value: unknown) {
 export function prospectRunExecutionSnapshotHash(
   snapshot: ProspectRunExecutionSnapshot
 ) {
-  return stableHash(snapshot);
+  return createHash("sha256")
+    .update(canonicalJsonStringify(snapshot))
+    .digest("hex");
 }
 
 function idempotencyKeyHash(rawKey: string) {

@@ -1917,7 +1917,7 @@ export async function createMysqlStore(
   return store;
 }
 
-export const GOODJOB_MYSQL_SCHEMA_VERSION = "1.2.1-004";
+export const GOODJOB_MYSQL_SCHEMA_VERSION = "1.2.1-005";
 
 const MIGRATION_PROTECTED_TABLES = ["users", "customers", "leads", "deals"] as const;
 
@@ -1932,6 +1932,34 @@ async function mysqlSchemaStats(pool: mysql.Pool) {
     tables: Number((tableRows as Array<{ count: number }>)[0]?.count || 0),
     columns: Number((columnRows as Array<{ count: number }>)[0]?.count || 0)
   };
+}
+
+async function migrateProspectRunExecutionSnapshotHashes(pool: mysql.Pool) {
+  const [rawRows] = await pool.query(
+    `SELECT id, execution_snapshot_json, execution_snapshot_hash
+     FROM prospect_search_runs`
+  );
+  const rows = rawRows as Array<{
+    id: string;
+    execution_snapshot_json: unknown;
+    execution_snapshot_hash: string;
+  }>;
+  let updated = 0;
+  for (const row of rows) {
+    const snapshot = mysqlJson(row.execution_snapshot_json);
+    const nextHash = prospectRunExecutionSnapshotHash(snapshot as Parameters<
+      typeof prospectRunExecutionSnapshotHash
+    >[0]);
+    if (nextHash === row.execution_snapshot_hash) continue;
+    await pool.query(
+      `UPDATE prospect_search_runs
+       SET execution_snapshot_hash = ?
+       WHERE id = ? AND execution_snapshot_hash = ?`,
+      [nextHash, row.id, row.execution_snapshot_hash]
+    );
+    updated += 1;
+  }
+  return updated;
 }
 
 async function protectedMigrationRowCounts(pool: mysql.Pool) {
@@ -1986,6 +2014,8 @@ export async function migrateMysqlSchema(input: {
     await ensureOrganizationRelationSchema(pool);
     await ensureProspectCoverageSchema(pool);
     await ensureProspectQualificationSchema(pool);
+    const executionSnapshotHashesUpdated =
+      await migrateProspectRunExecutionSnapshotHashes(pool);
     const after = await mysqlSchemaStats(pool);
     const protectedAfter = await protectedMigrationRowCounts(pool);
     for (const [table, count] of Object.entries(protectedBefore)) {
@@ -2015,6 +2045,7 @@ export async function migrateMysqlSchema(input: {
       columnsAfter: after.columns,
       addedTables: Math.max(0, after.tables - before.tables),
       addedColumns: Math.max(0, after.columns - before.columns),
+      executionSnapshotHashesUpdated,
       protectedRowsVerified: Object.keys(protectedBefore).length
     };
   } finally {
