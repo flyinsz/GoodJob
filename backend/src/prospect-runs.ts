@@ -1635,3 +1635,38 @@ export async function transitionProspectRun(input: {
     };
   });
 }
+
+export interface ProspectRunExecutionControl {
+  requestPause(runId: string): Promise<ProspectSearchRun>;
+  resume(runId: string): Promise<ProspectSearchRun>;
+  requestCancel(runId: string): Promise<ProspectSearchRun>;
+}
+
+export async function controlProspectRunExecution(input: {
+  store: CrmStore;
+  user: SessionUser;
+  runId: string;
+  ifMatch?: string;
+  action: "pause" | "resume" | "cancel";
+  control: ProspectRunExecutionControl;
+}) {
+  const run = input.user.role === "super_admin"
+    ? input.store.prospectSearchRuns.find((item) => item.id === input.runId)
+    : findVisibleRun(input.store, input.user, input.runId).run;
+  if (!run) {
+    throw new ProspectRunRequestError(
+      404,
+      "RUN_NOT_FOUND",
+      "搜索运行不存在或无权访问"
+    );
+  }
+  assertRunIfMatch(run, input.ifMatch);
+  verifyStoredSnapshot(run);
+  verifyQueueBridge(input.store, run);
+  const updated = input.action === "pause"
+    ? await input.control.requestPause(input.runId)
+    : input.action === "resume"
+      ? await input.control.resume(input.runId)
+      : await input.control.requestCancel(input.runId);
+  return runDetail(input.store, updated);
+}

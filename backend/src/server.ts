@@ -192,6 +192,7 @@ import {
   transitionProspectSuperSearch
 } from "./prospect-super-search.js";
 import { ProspectWorkerService } from "./prospect-worker-service.js";
+import { ProspectExecutionKernelError } from "./prospect-execution-kernel.js";
 import { loadLocalEnv } from "./runtime-env.js";
 import { createOpenApiDocument, registerSwagger } from "./swagger.js";
 import { agentApiRequestSchema, assertAgentApiToolRisk, classifyAgentApiRequest, deniedAgentApiReason, normalizeAgentApiPath, redactAgentApiData, routeTemplateMatches } from "./agent-api-policy.js";
@@ -343,6 +344,7 @@ import {
   listProspectRuns,
   parseProspectRunListQuery,
   prospectRunActionSchema,
+  controlProspectRunExecution,
   prospectRunEtag,
   prospectRunIdempotencyKeySchema,
   prospectRunIdSchema,
@@ -525,11 +527,13 @@ function sendProspectCampaignError(
     && !(error instanceof ProspectStrategyRequestError)
     && !(error instanceof ProspectRunRequestError)
     && !(error instanceof ProspectScheduleRequestError)
-    && !(error instanceof ProspectSuperSearchError)) return false;
-  res.status(error.status).json({
+    && !(error instanceof ProspectSuperSearchError)
+    && !(error instanceof ProspectExecutionKernelError)) return false;
+  const status = error instanceof ProspectExecutionKernelError ? 409 : error.status;
+  res.status(status).json({
     message: error.message,
     errorCode: error.code,
-    ...error.details
+    ...(error instanceof ProspectExecutionKernelError ? {} : error.details)
   });
   return true;
 }
@@ -12625,15 +12629,25 @@ for (const action of ["pause", "resume", "cancel"] as const) {
     const runId = prospectRunIdSchema.parse(req.params.id);
     const body = prospectRunActionSchema.parse(req.body);
     try {
-      const result = await transitionProspectRun({
-        store: getStore(),
-        user: req.user!,
-        runId,
-        ifMatch: req.header("If-Match"),
-        action,
-        body,
-        requestId: requestCorrelationId(req)
-      });
+      const store = getStore();
+      const result = activeProspectWorkerService?.status().running
+        ? await controlProspectRunExecution({
+            store,
+            user: req.user!,
+            runId,
+            ifMatch: req.header("If-Match"),
+            action,
+            control: activeProspectWorkerService
+          })
+        : await transitionProspectRun({
+            store,
+            user: req.user!,
+            runId,
+            ifMatch: req.header("If-Match"),
+            action,
+            body,
+            requestId: requestCorrelationId(req)
+          });
       await synchronizeProspectQueue();
       setProspectRunEtag(res, result);
       res.json(result);

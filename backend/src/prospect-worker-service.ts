@@ -154,6 +154,22 @@ export class ProspectWorkerService {
     return this.worker.pendingCandidates(filter);
   }
 
+  requestPause(runId: string) {
+    return this.worker.requestPause(runId);
+  }
+
+  resume(runId: string) {
+    return this.worker.resume(runId);
+  }
+
+  requestCancel(runId: string) {
+    return this.worker.requestCancel(runId);
+  }
+
+  reconcileTerminalRuns() {
+    return this.worker.reconcileTerminalRuns();
+  }
+
   async stop() {
     if (!this.running && !this.coordinator) return;
     const coordinator = this.coordinator;

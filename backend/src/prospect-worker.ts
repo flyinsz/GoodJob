@@ -128,6 +128,27 @@ export class ProspectWorker {
     this.wake?.();
   }
 
+  async requestPause(runId: string) {
+    const result = await this.kernel.requestPause(runId);
+    this.wakeNow();
+    await this.onStateChanged?.();
+    return result;
+  }
+
+  async resume(runId: string) {
+    const result = await this.kernel.resume(runId);
+    this.wakeNow();
+    await this.onStateChanged?.();
+    return result;
+  }
+
+  async requestCancel(runId: string) {
+    const result = await this.kernel.requestCancel(runId);
+    this.wakeNow();
+    await this.onStateChanged?.();
+    return result;
+  }
+
   private async sleep() {
     if (!this.running) return;
     await new Promise<void>((resolve) => {
@@ -187,6 +208,7 @@ export class ProspectWorker {
   private async executeOne() {
     if (await this.settlePendingResponses()) return true;
     await this.kernel.recoverExpiredLeases();
+    if ((await this.kernel.reconcileTerminalRuns()) > 0) return true;
     const claim = await this.kernel.claimNext();
     if (!claim) return false;
     try {
@@ -251,6 +273,12 @@ export class ProspectWorker {
     }
   }
 
+  async reconcileTerminalRuns() {
+    const result = await this.kernel.reconcileTerminalRuns();
+    if (result > 0) await this.onStateChanged?.();
+    return result;
+  }
+
   private async notifyStateChanged() {
     try {
       await this.onStateChanged?.();
@@ -282,7 +310,11 @@ export class ProspectWorker {
     console.error("[prospect-worker]", {
       event,
       ...ids,
-      code
+      code,
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+      ...(error instanceof Error && error.stack
+        ? { stack: error.stack.slice(0, 2_000) }
+        : {})
     });
   }
 

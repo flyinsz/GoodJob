@@ -2623,6 +2623,32 @@ export class ProspectExecutionKernel {
     });
   }
 
+  async reconcileTerminalRuns(now = new Date().toISOString()) {
+    this.assertStarted();
+    validIso(now);
+    return persistMutation(this.store, () => {
+      const before = snapshot(this.store);
+      let reconciled = 0;
+      for (const run of this.store.prospectSearchRuns) {
+        if (this.isRunAllowed(run.id)
+          && ![
+            "cancelled",
+            "succeeded",
+            "succeeded_empty",
+            "partial_success",
+            "failed"
+          ].includes(run.status)
+          && this.finishRunIfTerminal(run, now)) {
+          reconciled += 1;
+        }
+      }
+      return {
+        value: reconciled,
+        rollback: () => restore(this.store, before)
+      };
+    });
+  }
+
   async claimNext(now = new Date().toISOString()) {
     this.assertStarted();
     validIso(now);

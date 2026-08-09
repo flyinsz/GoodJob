@@ -19308,9 +19308,9 @@ function renderLeadFinderLiveOverview() {
         <div class="lead-live-actions">
           <button class="lead-radar-launch" type="button" data-lead-live-radar><span aria-hidden="true">▶</span>${terminal ? "重新演示" : "实时回放"}</button>
           <button class="btn" type="button" data-lead-live-open>查看详情</button>
-          ${job.backendRunId && job.backendRunStatus === "queued" ? `<button class="btn" type="button" data-lead-live-action="pause">暂停</button>` : ""}
+          ${job.backendRunId && ["queued", "running"].includes(job.backendRunStatus || "") ? `<button class="btn" type="button" data-lead-live-action="pause">暂停</button>` : ""}
           ${job.backendRunId && job.backendRunStatus === "paused" ? `<button class="btn primary" type="button" data-lead-live-action="resume">恢复</button>` : ""}
-          ${job.backendRunId && ["queued", "paused"].includes(job.backendRunStatus || "") ? `<button class="btn danger" type="button" data-lead-live-action="cancel">取消</button>` : ""}
+          ${job.backendRunId && ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(job.backendRunStatus || "") ? `<button class="btn danger" type="button" data-lead-live-action="cancel">停止</button>` : ""}
         </div>
       </div>
       <div class="lead-live-thread" role="log" aria-live="polite" aria-relevant="additions text">
@@ -20321,9 +20321,9 @@ function renderLeadTaskDetail() {
     <span>已持续 <b data-task-run-elapsed>00:00</b></span>
   `;
   actions.innerHTML = `
-    ${job.backendRunId && job.backendRunStatus === "queued" ? `<button class="btn" data-lead-detail-action="pause">暂停</button>` : ""}
+    ${job.backendRunId && ["queued", "running"].includes(job.backendRunStatus || "") ? `<button class="btn" data-lead-detail-action="pause">暂停</button>` : ""}
     ${job.backendRunId && job.backendRunStatus === "paused" ? `<button class="btn primary" data-lead-detail-action="resume">恢复</button>` : ""}
-    ${job.backendRunId && ["queued", "paused"].includes(job.backendRunStatus || "") ? `<button class="btn danger" data-lead-detail-action="cancel">取消任务</button>` : ""}
+    ${job.backendRunId && ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(job.backendRunStatus || "") ? `<button class="btn danger" data-lead-detail-action="cancel">停止任务</button>` : ""}
   `;
   const currentStep = job.steps[Math.min(job.steps.length - 1, Math.floor((Math.max(job.progress, 1) / 100) * job.steps.length))] || "准备执行";
   stage.innerHTML = `
@@ -20412,9 +20412,9 @@ function renderLeadFinderJobs() {
       ${renderLeadFinderJobDetails(job)}
       <div class="lead-job-actions">
         <button class="lead-job-open-hint" type="button" data-lead-job-open><span><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></span>查看详情</button>
-        ${job.backendRunId && job.backendRunStatus === "queued" ? `<button class="btn" data-lead-run-action="pause">暂停任务</button>` : ""}
+        ${job.backendRunId && ["queued", "running"].includes(job.backendRunStatus || "") ? `<button class="btn" data-lead-run-action="pause">暂停任务</button>` : ""}
         ${job.backendRunId && job.backendRunStatus === "paused" ? `<button class="btn primary" data-lead-run-action="resume">恢复任务</button>` : ""}
-        ${job.backendRunId && ["queued", "paused"].includes(job.backendRunStatus || "") ? `<button class="btn danger" data-lead-run-action="cancel">取消任务</button>` : ""}
+        ${job.backendRunId && ["queued", "running", "pause_requested", "paused", "cancel_requested"].includes(job.backendRunStatus || "") ? `<button class="btn danger" data-lead-run-action="cancel">停止任务</button>` : ""}
       </div>
     </article>
   `).join("");
@@ -20458,7 +20458,7 @@ async function transitionLeadFinderRun(
   if (!job.backendRunId || !job.backendRunRevision) return;
   const original = button.textContent || "";
   button.disabled = true;
-  button.textContent = action === "pause" ? "暂停中" : action === "resume" ? "恢复中" : "取消中";
+  button.textContent = action === "pause" ? "暂停中" : action === "resume" ? "恢复中" : "停止中";
   try {
     const path = job.superSearchMissionId
       ? `/api/prospect-super-search/${encodeURIComponent(job.superSearchMissionId)}/${action}`
@@ -20472,7 +20472,7 @@ async function transitionLeadFinderRun(
       })
     });
     await loadProspectRuns(false);
-    toast(action === "pause" ? "获客任务已暂停" : action === "resume" ? "获客任务已恢复" : "获客任务已取消");
+    toast(action === "pause" ? "获客任务已暂停" : action === "resume" ? "获客任务已恢复" : "获客任务已停止");
   } catch (error) {
     await loadProspectRuns(true);
     toast(error instanceof Error ? error.message : "任务状态变更失败", "error");
