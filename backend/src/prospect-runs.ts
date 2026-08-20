@@ -6,6 +6,7 @@ import {
   timingSafeEqual
 } from "node:crypto";
 import { z } from "zod";
+import { canonicalJsonStringify } from "./canonical-json.js";
 import { AI_SEARCH_ADAPTER_VERSION } from "./ai-search-provider.js";
 import { getProvider } from "./lead-providers.js";
 import { PROVIDER_CONTRACT_VERSION } from "./provider-contract.js";
@@ -170,7 +171,7 @@ function configuredSecret(
 
 function stableHash(value: unknown) {
   return createHash("sha256")
-    .update(JSON.stringify(value))
+    .update(canonicalJsonStringify(value))
     .digest("hex");
 }
 
