@@ -9,9 +9,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/package.json
 COPY frontend/package.json frontend/package.json
+COPY integration-sdk/package.json integration-sdk/package.json
+COPY integration-worker/package.json integration-worker/package.json
+COPY goodjob-runner/package.json goodjob-runner/package.json
 RUN npm ci
 COPY . .
-RUN npm run build --workspace frontend
+RUN npm run build --workspace @goodjob/integration-connector-sdk && npm run build --workspace frontend
 
 FROM nginx:1.27-alpine
 ARG SOURCE_REPO
