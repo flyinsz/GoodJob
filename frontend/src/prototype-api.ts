@@ -33,6 +33,12 @@ import { mountIntegrationCenter, type IntegrationCenterController } from "./inte
 
 isoCountries.registerLocale(enCountries);
 isoCountries.registerLocale(zhCountries);
+
+function safeUuid(prefix: string = "") {
+  var id = (globalThis.crypto && globalThis.crypto.randomUUID && globalThis.crypto.randomUUID())
+    || (Date.now() + '-' + Math.random().toString(36).slice(2, 12));
+  return prefix ? (prefix + '_' + id) : id;
+}
 const countryFlagAssets = Object.fromEntries(Object.entries(import.meta.glob(
   "../../node_modules/flag-icons/flags/4x3/*.svg",
   { eager: true, query: "?url", import: "default" }
@@ -3640,7 +3646,7 @@ const storage = {
 const DEMO_ACCOUNT_PASSWORD = "goodjob123";
 
 function newAgentConversationId() {
-  return `agc_${crypto.randomUUID()}`;
+  return safeUuid("agc");
 }
 
 function ensureAgentConversationId(userId = state.user?.id || "anonymous") {
@@ -6512,7 +6518,7 @@ function approvalBusinessLabel(type: string) {
 }
 
 function approvalTaskInstanceId(task: ApprovalTask) { return String(task.instance_id || task.instanceId || ""); }
-function approvalActionKey(prefix = "approval") { return `${prefix}:${Date.now()}:${crypto.randomUUID()}`; }
+function approvalActionKey(prefix = "approval") { return `${prefix}:${Date.now()}:${safeUuid()}`; }
 
 function renderApprovalMetrics() {
   const root = qs<HTMLElement>("#approvalMetrics");
@@ -12901,7 +12907,7 @@ function bindDealItemsEditor() {
   };
   qsa<HTMLElement>(".deal-item-row", list).forEach(bindRow);
   qs<HTMLButtonElement>("#addDealItemButton")?.addEventListener("click", () => {
-    list.insertAdjacentHTML("beforeend", renderDealItemEditorRow({ id: `deal_item_${crypto.randomUUID()}`, product: "", model: "", quantity: 1, unitPrice: 0 }));
+   list.insertAdjacentHTML("beforeend", renderDealItemEditorRow({ id: safeUuid("deal_item"), product: "", model: "", quantity: 1, unitPrice: 0 }));
     const row = list.lastElementChild as HTMLElement | null;
     if (row) {
       bindRow(row);
@@ -12988,7 +12994,7 @@ async function saveDeal() {
   const recommendationId = qs<HTMLInputElement>("#dealRecommendationIdInput")?.value.trim() || "";
   const title = qs<HTMLInputElement>("#dealTitleInput")?.value.trim() || "";
   const items = qsa<HTMLElement>("#dealItemsList .deal-item-row").map((row) => ({
-    id: row.dataset.dealItemId || `deal_item_${crypto.randomUUID()}`,
+    id: row.dataset.dealItemId || safeUuid("deal_item"),
     productId: row.dataset.productId || "",
     product: qs<HTMLInputElement>("[data-deal-item-product]", row)?.value.trim() || "",
     model: qs<HTMLInputElement>("[data-deal-item-model]", row)?.value.trim() || "",
@@ -18428,7 +18434,7 @@ function formatFileSize(value: number) {
 }
 
 function appendDatabaseLocalEvent(stage: string, message: string, level: DatabaseMaintenanceEvent["level"] = "info", table = "") {
-  databaseLocalEvents.push({ id: `dbel_${crypto.randomUUID()}`, at: new Date().toISOString(), level, stage, table, message });
+  databaseLocalEvents.push({ id: safeUuid("dbel"), at: new Date().toISOString(), level, stage, table, message });
   databaseLocalEvents = databaseLocalEvents.slice(-500);
   renderDatabaseStream();
 }
@@ -29684,7 +29690,7 @@ async function launchProspectRunFromLeadFinder(
   return api<LeadFinderLaunchResult>("/api/lead-finder/launch", {
     method: "POST",
     headers: {
-      "Idempotency-Key": `lead-finder:${crypto.randomUUID()}`
+      "Idempotency-Key": `lead-finder:${safeUuid()}`
     },
     body: JSON.stringify({
       mode,

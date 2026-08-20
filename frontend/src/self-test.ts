@@ -524,4 +524,6 @@ assert.match(apiLayer, /scenario: developmentEmailScenario,[\s\S]*goal: developm
 assert.match(apiLayer, /developmentEmailScenario === "custom_goal" && !developmentEmailGoal/, "自然语言目标场景调用 AI 前必须校验目标");
 assert.match(apiLayer, /activateNavView\("development-email", \(\) => void generateDevelopmentEmailDraftPage\(\)\)/, "进入开发信页面只能加载基础模板");
 
+assert.doesNotMatch(apiLayer, /\$\{crypto\.randomUUID\(\)\}/, "前端不得在模板字符串中直接调用 crypto.randomUUID");
+assert.match(apiLayer, /function safeUuid\(prefix\)/, "前端必须提供带回退的 safeUuid 辅助函数");
 console.log(JSON.stringify({ ok: true, checked: required.length }, null, 2));
