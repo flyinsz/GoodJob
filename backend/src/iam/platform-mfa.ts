@@ -8,6 +8,10 @@ function rows<T>(value: unknown) { return value as T[]; }
 function one<T>(value: unknown) { return rows<T>(value)[0]; }
 function fail(status: number, message: string): never { throw Object.assign(new Error(message), { status }); }
 
+function mysqlDatetime(date: Date): string {
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
 function encryptionKey() {
   const configured = process.env.PLATFORM_MFA_ENCRYPTION_KEY?.trim();
   if (!configured || configured.length < 32) fail(503, "平台 MFA 加密密钥未配置或长度不足 32 个字符");
@@ -103,7 +107,7 @@ export function createPlatformMfaService(pool: mysql.Pool): PlatformMfaService {
       const [mfaResult] = await pool.query(`SELECT enabled FROM platform_operator_mfa WHERE operator_id = ? LIMIT 1`, [current.id]);
       if (!one<{ enabled: boolean }>(mfaResult)?.enabled) fail(409, "请先完成平台 MFA 注册");
       const challengeId = `mfac_${randomUUID().replaceAll("-", "")}`;
-      const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+      const expiresAt = mysqlDatetime(new Date(Date.now() + 5 * 60_000));
       await pool.query(`INSERT INTO platform_mfa_challenges (id, operator_id, expires_at, created_at) VALUES (?, ?, ?, NOW(3))`, [challengeId, current.id, expiresAt]);
       return { challengeId, expiresAt };
     },
