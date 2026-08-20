@@ -24,9 +24,9 @@ import {
   compileAgentConsultationEnvelope,
   compileAgentSkillEnvelope
 } from "./agent-skills.js";
-import { activeSalesPlaybookContext, activateSalesPlaybook, listSalesDistillations, listSalesPlaybookActivations, pauseSalesPlaybook } from "./sales-distillation.js";
 import { listAgentMemories, proposeAgentMemory, retrieveRelevantAgentMemories, setAgentMemoryStatus } from "./agent-memory.js";
 import { assertAgentApiToolRisk, classifyAgentApiRequest } from "./agent-api-policy.js";
+import { canSeeOwner, hasIamPermission } from "./auth.js";
 import { compileAgentKnowledgeEnvelope, createAgentKnowledgeDraft } from "./agent-knowledge.js";
 import {
   agentTurnDecisionModelSchema,
@@ -37,9 +37,10 @@ import {
   type AgentTurnDecision
 } from "./agent-turn-decision.js";
 import type { CrmStore } from "./store.js";
-import type { AgentMissionCheckpointRecord, AgentRunEventRecord, AgentRunRecord, AgentRunStatus, AgentRunStepRecord, AiModelConfig, Customer, CustomerActivity, Lead, Todo, User } from "./types.js";
+import type { AgentMissionCheckpointRecord, AgentRunEventRecord, AgentRunRecord, AgentRunStatus, AgentRunStepRecord, AiModelConfig, Customer, CustomerActivity, Lead, SessionUser, Todo, User } from "./types.js";
 
-export type AgentActor = Pick<User, "id" | "teamId" | "role">;
+export type AgentActor = Pick<User, "id" | "teamId" | "role"> & Partial<Pick<SessionUser,
+  "iamPermissions" | "iamRoleNames" | "iamSource" | "iamDataScope">>;
 
 export type AgentRisk = "read" | "draft" | "write" | "external";
 export type AgentStepStatus = "ready" | "needs_confirmation" | "queued" | "running" | "done" | "failed" | "skipped";
@@ -64,6 +65,8 @@ export interface AgentExecutionRuntime {
   getCommunicationInbox?: (user: AgentActor, input: Record<string, unknown>) => Promise<Record<string, unknown>>;
   listCrmApiCatalog?: (user: AgentActor, input: Record<string, unknown>) => Promise<Record<string, unknown>>;
   requestCrmApi?: (user: AgentActor, input: Record<string, unknown>, tool: "api.read" | "api.write" | "api.external", executionId: string) => Promise<Record<string, unknown>>;
+  listIntegrationTools?: (user: AgentActor) => Promise<Record<string, unknown>>;
+  requestIntegrationRead?: (user: AgentActor, input: Record<string, unknown>, executionId: string) => Promise<Record<string, unknown>>;
 }
 
 export interface AgentPlanContext {
@@ -166,9 +169,6 @@ const TOOL_RISKS: Record<string, AgentRisk> = {
   "maintenance.pause_watch": "write",
   "maintenance.resume_watch": "write",
   "maintenance.cancel_watch": "write",
-  "distillation.list_playbooks": "read",
-  "distillation.activate_playbook": "write",
-  "distillation.pause_playbook": "write",
   "research.run_background": "draft",
   "communication.get_inbox": "read",
   "memory.list": "read",
@@ -179,11 +179,13 @@ const TOOL_RISKS: Record<string, AgentRisk> = {
   "api.catalog": "read",
   "api.read": "read",
   "api.write": "write",
-  "api.external": "external"
+  "api.external": "external",
+  "integration.catalog": "read",
+  "integration.read": "read"
 };
 
 const TOOL_GUIDANCE: Record<string, string> = {
-  "ui.navigate": "切换当前网页模块，input: {view}。view 必须使用页面 ID：dashboard、lead-finder、prospect-list、leads、customers、pipeline、customer-pool、whatsapp、reminders、memos、development-email、ai-research、sales-distillation",
+  "ui.navigate": "切换当前网页模块，input: {view}。view 必须使用页面 ID：dashboard、lead-finder、prospect-list、leads、customers、pipeline、customer-pool、whatsapp、reminders、memos、development-email、ai-research",
   "ui.open_customer": "打开客户全景，input: {customerId}",
   "ui.open_lead": "打开线索详情，input: {leadId}",
   "ui.open_development_email": "打开开发信工作台，input: {entityType, entityId}",
@@ -216,9 +218,6 @@ const TOOL_GUIDANCE: Record<string, string> = {
   "maintenance.pause_watch": "暂停本人客户守护，input: {watchId}",
   "maintenance.resume_watch": "继续本人客户守护，input: {watchId}",
   "maintenance.cancel_watch": "取消本人客户守护，input: {watchId}",
-  "distillation.list_playbooks": "读取本人可用的已发布蒸馏打法和当前应用状态，input: {}",
-  "distillation.activate_playbook": "将已发布蒸馏打法设为本人 Agent 当前打法，同一时间只允许一个，input: {distillationId}",
-  "distillation.pause_playbook": "停用本人当前蒸馏打法，input: {activationId}",
   "research.run_background": "使用现有 CRM 证据、公开来源快照和当前模型执行客户或线索背调，input: {entityType, entityId}",
   "communication.get_inbox": "读取本人 Communication 已连接账号的未读会话并关联本人 CRM 客户，input: {limit?}",
   "memory.list": "读取当前账号可见且带来源的业务记忆，input: {status?, type?, subjectId?, query?}",
@@ -229,7 +228,9 @@ const TOOL_GUIDANCE: Record<string, string> = {
   "api.catalog": "检索当前 Agent 可调用的真实 CRM 操作契约，返回 requestSchema、authorizationPolicy、completionEvidence、refreshView 和 executable。支持分页。账号、登录、个人资料、密钥和个人通讯绑定接口不会返回。input: {query?, method?, offset?, limit?}",
   "api.read": "调用目录中 executable=true 的只读业务接口。只能使用 GET，input: {method:'GET', path:'/api/...', query?:{}, headers?:{}}",
   "api.write": "调用目录中 executable=true 的 CRM 新增、修改或删除接口。严格按 requestSchema 生成 body，并按 authorizationPolicy 确认。input: {method:'POST|PUT|PATCH|DELETE', path:'/api/...', query?:{}, headers?:{'If-Match'?:string,'Idempotency-Key'?:string}, body?:{}}",
-  "api.external": "调用会向客户发送、访问外部来源或产生外部副作用的接口。必须冻结 method/path/headers/body 后确认，并核验 completionEvidence。input 同 api.write"
+  "api.external": "调用会向客户发送、访问外部来源或产生外部副作用的接口。必须冻结 method/path/headers/body 后确认，并核验 completionEvidence。input 同 api.write",
+  "integration.catalog": "列出当前账号经管理员审核并授权的外部只读工具稳定别名、输入 Schema 和证据要求，input: {}",
+  "integration.read": "通过已审核的稳定别名调用外部只读工具，input: {stableAlias,input:{...}}。必须先从 integration.catalog 取得别名和 Schema；成功结果必须包含 source 和 observedAt"
 };
 
 const CORE_AGENT_TOOL_REFS = [
@@ -237,7 +238,9 @@ const CORE_AGENT_TOOL_REFS = [
   "api.catalog",
   "api.read",
   "api.write",
-  "api.external"
+  "api.external",
+  "integration.catalog",
+  "integration.read"
 ];
 
 function skillAwareToolGuidance(goal: string, activeView = "", goalSpec?: AgentGoalSpec) {
@@ -290,16 +293,11 @@ function signStep(runId: string, stepId: string, tool: string, input: Record<str
 }
 
 function visibleCustomer(user: AgentActor, customer: Customer) {
-  if (customer.teamId !== user.teamId && user.role !== "super_admin") return false;
-  return user.role === "super_admin"
-    || user.role === "admin"
-    || user.role === "manager"
-    || customer.ownerId === user.id;
+  return hasIamPermission(user, "customer.read") && canSeeOwner(user, customer.ownerId, customer.teamId);
 }
 
 function writableCustomer(user: AgentActor, customer: Customer) {
-  return visibleCustomer(user, customer)
-    && (user.role === "super_admin" || user.role === "admin" || customer.ownerId === user.id);
+  return hasIamPermission(user, "customer.update") && canSeeOwner(user, customer.ownerId, customer.teamId);
 }
 
 function visibleCustomers(store: CrmStore, user: AgentActor) {
@@ -307,11 +305,7 @@ function visibleCustomers(store: CrmStore, user: AgentActor) {
 }
 
 function visibleLead(user: AgentActor, lead: Lead) {
-  if (lead.teamId !== user.teamId && user.role !== "super_admin") return false;
-  return user.role === "super_admin"
-    || user.role === "admin"
-    || user.role === "manager"
-    || lead.ownerId === user.id;
+  return hasIamPermission(user, "lead.read") && canSeeOwner(user, lead.ownerId, lead.teamId);
 }
 
 function visibleLeads(store: CrmStore, user: AgentActor) {
@@ -405,7 +399,6 @@ const AGENT_NAVIGATION_CATALOG = [
   { view: "settings", title: "系统设置", phrases: ["系统设置", "账号管理", "权限设置", "公司资料", "团队账号", "用户管理"] },
   { view: "profile", title: "个人设置", phrases: ["个人设置", "个人资料", "发件邮箱", "smtp", "邮件签名", "个人配置"] },
   { view: "ai-agent", title: "AI Agent", phrases: ["ai agent", "智能助手", "业务助手", "智能体"] },
-  { view: "sales-distillation", title: "销售训练", phrases: ["销售训练", "业务员训练", "能力蒸馏", "业务员蒸馏", "团队打法", "销售打法"] },
   { view: "development-email", title: "开发信", phrases: ["开发信", "写开发信", "开发邮件", "客户开发邮件", "冷邮件", "cold email", "外贸邮件", "邮件草稿"] },
   { view: "ai-research", title: "AI背调", phrases: ["ai背调", "客户背调", "线索背调", "企业调查", "背景调查", "查公司背景"] }
 ] as const;
@@ -442,7 +435,6 @@ export function normalizeAgentNavigationView(value: unknown) {
     "import-export": "imports",
     configuration: "settings",
     research: "ai-research",
-    distillation: "sales-distillation"
   };
   const normalized = aliases[requested] || requested;
   return AGENT_NAVIGATION_VIEWS.has(normalized) ? normalized : "";
@@ -568,7 +560,7 @@ function hasDelegatedCustomerCreateFallback(goal: string, intent: DeterministicB
 }
 
 function canAgentApproveTradeDocuments(user: AgentActor) {
-  return ["manager", "admin", "super_admin"].includes(user.role);
+  return hasIamPermission(user, "document.approve");
 }
 
 function extractBusinessValue(goal: string, patterns: RegExp[]) {
@@ -807,6 +799,15 @@ function fallbackSteps(goal: string, context: AgentPlanContext = {}): Array<z.in
   const current = normalizedContext(context);
   const entityType = current.selectedLeadId ? "lead" : "customer";
   const entityId = current.selectedLeadId || current.selectedCustomerId;
+  const explicitIntegration = goal.match(/^\s*(?:MCP|外部工具)\s+([a-z][a-z0-9._:-]{2,119})(?:\s+([\s\S]+))?\s*$/iu);
+  if (explicitIntegration?.[1]) {
+    try {
+      const input = explicitIntegration[2]?.trim() ? JSON.parse(explicitIntegration[2]) as Record<string, unknown> : {};
+      return [{ tool: "integration.read", title: `调用外部只读工具 ${explicitIntegration[1]}`, input: { stableAlias: explicitIntegration[1], input } }];
+    } catch {
+      return [{ tool: "integration.catalog", title: "读取已授权外部工具目录", input: {} }];
+    }
+  }
   const explicitApi = goal.match(/^\s*(GET|POST|PUT|PATCH|DELETE)\s+(\/api\/[A-Za-z0-9_./:-]+)(?:\s+([\s\S]+))?\s*$/iu);
   if (explicitApi?.[1] && explicitApi[2]) {
     try {
@@ -826,9 +827,6 @@ function fallbackSteps(goal: string, context: AgentPlanContext = {}): Array<z.in
   if (/(未读|新回复|客户回复|收件箱|谁回复).*(communication|whatsapp|消息)?/iu.test(lower)) {
     return [{ tool: "communication.get_inbox", title: "读取 Communication 未读客户回复", input: { limit: 20 } }];
   }
-  if (/(蒸馏打法|业务员打法|团队打法)/u.test(lower)) {
-    return [{ tool: "distillation.list_playbooks", title: "读取可用的业务员蒸馏打法", input: {} }];
-  }
   if (/(查看|读取|列出|我的).*(业务记忆|记忆)|(?:业务记忆|记忆).*(查看|读取|列表)/u.test(lower)) {
     return [{ tool: "memory.list", title: "读取当前可用的业务记忆", input: { status: "active" } }];
   }
@@ -845,6 +843,9 @@ function fallbackSteps(goal: string, context: AgentPlanContext = {}): Array<z.in
   }
   if (/(记住|记下来|以后都|我的偏好)/u.test(lower)) {
     return [{ tool: "memory.propose", title: "保存为待确认的个人业务记忆", input: { type: "user_preference", scope: "personal", title: goal.slice(0, 80), content: goal.slice(0, 500), sourceType: "agent", sourceId: "conversation", confidence: 80 } }];
+  }
+  if (/(mcp|外部工具|集成工具)/iu.test(lower)) {
+    return [{ tool: "integration.catalog", title: "读取已授权外部工具目录", input: {} }];
   }
   if (/(接口|api)/iu.test(lower)) {
     const query = /(客户)/u.test(lower) ? "customers"
@@ -1004,7 +1005,6 @@ function fallbackSummary(goal: string, steps: Array<z.infer<typeof modelStepSche
   if (tools.has("outreach.send_whatsapp")) return "可以。我会使用你个人已连接的 Communication 账号发送，批准后转入后台执行。";
   if (tools.has("outreach.create_sequence")) return "我已准备一条有上限、可随时暂停的自动触达序列。确认后只会按当前锁定的对象、时间和内容执行，检测到回复或退订会自动停止。";
   if (tools.has("maintenance.create_watch")) return "我会先预览当前客户风险，再启用有上限的定期客户守护。它只创建站内待办，不会自动改资料或向客户发消息。";
-  if (tools.has("distillation.list_playbooks")) return "我会读取团队已经发布的蒸馏打法和你的当前应用状态，供你选择应用。";
   if (tools.has("research.run_background")) return "我会使用现有 CRM 事实和来源证据完成背调，并直接打开完整背调结果。";
   if (tools.has("communication.get_inbox")) return "我会读取你本人 Communication 账号的未读会话，并关联到可见的 CRM 客户。";
   if (tools.has("outreach.draft_development_email")) return "我会根据当前客户或线索资料生成一封可编辑的开发信，并打开开发信工作台。";
@@ -1132,7 +1132,6 @@ async function modelSteps(
     activeView: current.activeView,
     goalSpec: baseGoalSpec
   });
-  const activePlaybook = activeSalesPlaybookContext(store, user);
   const selectedCustomer = visibleCustomers(store, user).find((item) => item.id === current.selectedCustomerId);
   const selectedLead = visibleLeads(store, user).find((item) => item.id === current.selectedLeadId);
   const relevantMemories = retrieveRelevantAgentMemories(store, user, goal, { customerId: current.selectedCustomerId, limit: 6 });
@@ -1171,7 +1170,6 @@ async function modelSteps(
     `CRM 页面能力目录：${JSON.stringify(AGENT_NAVIGATION_CATALOG.map((item) => ({ view: item.view, title: item.title, useFor: item.phrases })))}。用户表达想去某项业务功能时，选择用途最接近的唯一页面，ui.navigate.view 只能填对应 view。`,
     `当前用户角色：${user.role}，团队：${user.teamId}，可见客户数：${visibleCustomers(store, user).length}`,
     `经权限过滤的系统知识上下文：${JSON.stringify(knowledgeEnvelope).slice(0, 8_000)}`,
-    `当前启用的业务员蒸馏打法：${JSON.stringify(activePlaybook ? { source: activePlaybook.distillation.sourceUserName, patterns: activePlaybook.distillation.patterns, playbook: activePlaybook.distillation.playbook, coachingActions: activePlaybook.distillation.coachingActions } : null)}`,
     `与目标相关的已确认业务记忆：${JSON.stringify(relevantMemories.map((item) => ({ id: item.id, type: item.type, title: item.title, content: item.content, sourceType: item.sourceType, sourceId: item.sourceId }))).slice(0, 5_000)}`,
     "summary 要像助手在连续对话中给用户的自然回复，不超过120字。",
     "未获得字段生成委托时，缺少目标业务对象或外部收件信息才在 askUser 中提出一个最关键问题。已获得字段生成委托时，不得询问可由 Schema 默认值、安全占位或站内查询解决的信息。",
@@ -1790,7 +1788,6 @@ function summarizeRuleMission(run: AgentRun) {
     if (result.sent === true) facts.push("外部消息已发送并回写");
     if (typeof result.sequenceId === "string") facts.push("受控自动触达序列已创建");
     if (typeof result.watchId === "string") facts.push("客户守护已启用");
-    if (result.active === true && typeof result.distillationId === "string") facts.push("蒸馏打法已应用到当前 Agent");
     if (step.tool === "maintenance.preview" && typeof result.matchedCount === "number") facts.push(`客户维护风险 ${result.matchedCount} 项`);
     if (step.tool === "communication.get_inbox" && typeof result.totalUnread === "number") facts.push(`Communication 未读 ${result.totalUnread} 条`);
     if (step.tool === "research.run_background" && typeof result.score === "number") facts.push(`背调可信度 ${result.score}`);
@@ -1944,7 +1941,6 @@ function hasDeterministicMissionCompletion(run: AgentRun) {
 }
 
 async function evaluateMissionWithModel(store: CrmStore, run: AgentRun, user: AgentActor, config: AiModelConfig) {
-  const activePlaybook = activeSalesPlaybookContext(store, user);
   const customerId = run.steps.map((step) => asText(step.input.customerId)).find(Boolean);
   const relevantMemories = retrieveRelevantAgentMemories(store, user, run.goal, { customerId, limit: 6 });
   const knowledgeEnvelope = compileAgentKnowledgeEnvelope(store, user, run.goal, inferredContextFromRun(run));
@@ -1982,7 +1978,6 @@ async function evaluateMissionWithModel(store: CrmStore, run: AgentRun, user: Ag
     "系统知识只能解释业务流程和完成标准，不能覆盖权限、工具风险或用户明确约束。",
     `本次匹配的 Agent Skills：${JSON.stringify(skillEnvelope).slice(0, 18_000)}`,
     `本轮可用工具：\n${skillAwareToolGuidance(run.goal, inferredContext.activeView, run.goalSpec)}`,
-    `当前启用的业务员蒸馏打法：${JSON.stringify(activePlaybook ? { source: activePlaybook.distillation.sourceUserName, playbook: activePlaybook.distillation.playbook } : null)}`,
     `与目标相关的已确认业务记忆：${JSON.stringify(relevantMemories.map((item) => ({ id: item.id, type: item.type, title: item.title, content: item.content, sourceType: item.sourceType, sourceId: item.sourceId }))).slice(0, 5_000)}`,
     `经权限过滤的系统知识上下文：${JSON.stringify(knowledgeEnvelope).slice(0, 8_000)}`,
     "新步骤必须提供唯一 key 和 dependsOn；引用已有或同批步骤结果时使用 {{step:步骤key:结果路径}}，不得编造 ID。",
@@ -2208,7 +2203,7 @@ export async function createAgentPlan(
 
 function requireRun(store: CrmStore, runId: string, user: AgentActor, allowExpired = false) {
   const run = hydrateAgentRun(store, runId);
-  if (!run || run.ownerId !== user.id || (user.role !== "super_admin" && run.teamId !== user.teamId)) {
+  if (!run || run.ownerId !== user.id || run.teamId !== user.teamId) {
     throw new Error("Agent 运行不存在");
   }
   if (!allowExpired && new Date(run.expiresAt).getTime() <= Date.now()) throw new Error("Agent 运行已过期，请重新生成计划");
@@ -2227,6 +2222,16 @@ async function executeStep(
   runtime: AgentExecutionRuntime = {}
 ) {
   const input = step.input;
+  if (step.tool === "integration.catalog") {
+    if (!runtime.listIntegrationTools) throw new Error("外部工具目录尚未连接");
+    return await runtime.listIntegrationTools(user);
+  }
+  if (step.tool === "integration.read") {
+    if (!asText(input.stableAlias)) throw new Error("外部工具调用缺少稳定别名");
+    if (!input.input || typeof input.input !== "object" || Array.isArray(input.input)) throw new Error("外部工具调用参数必须是对象");
+    if (!runtime.requestIntegrationRead) throw new Error("外部工具安全执行网关尚未连接");
+    return await runtime.requestIntegrationRead(user, input, step.id);
+  }
   if (step.tool === "api.catalog") {
     if (!runtime.listCrmApiCatalog) throw new Error("CRM API 目录尚未连接");
     return await runtime.listCrmApiCatalog(user, input);
@@ -2241,7 +2246,7 @@ async function executeStep(
   if (step.tool === "ui.navigate") {
     const view = normalizeAgentNavigationView(input.view);
     if (!view) throw new Error("Agent 返回了未知页面，请重新说明要打开的 CRM 模块");
-    if (view === "settings" && user.role === "sales") throw new Error("当前账号无权访问系统设置");
+    if (view === "settings" && !hasIamPermission(user, "system.settings.manage")) throw new Error("当前账号无权访问系统设置");
     const route = AGENT_NAVIGATION_CATALOG.find((item) => item.view === view);
     const matchScore = Math.max(0, Math.min(100, Number(input.matchScore || 0)));
     return {
@@ -2414,19 +2419,7 @@ async function executeStep(
     const action = step.tool === "maintenance.pause_watch" ? "pause" : step.tool === "maintenance.resume_watch" ? "resume" : "cancel";
     return await runtime.controlCustomerMaintenanceWatch(user, input, action);
   }
-  if (step.tool === "distillation.list_playbooks") {
-    const distillations = listSalesDistillations(store, user).filter((item) => item.status === "published");
-    const activations = listSalesPlaybookActivations(store, user);
-    return { count: distillations.length, distillations, activations };
-  }
-  if (step.tool === "distillation.activate_playbook") {
-    const activation = await activateSalesPlaybook(store, user, asText(input.distillationId));
-    return { activation, distillationId: activation.distillationId, active: true };
-  }
-  if (step.tool === "distillation.pause_playbook") {
-    const activation = await pauseSalesPlaybook(store, user, asText(input.activationId));
-    return { activation, distillationId: activation.distillationId, active: false };
-  }
+
   if (step.tool === "research.run_background") {
     if (!runtime.runBackgroundResearch) throw new Error("AI 背调执行器尚未启动");
     return await runtime.runBackgroundResearch(user, input);
@@ -3282,7 +3275,7 @@ export function getAgentRun(store: CrmStore, runId: string, user: AgentActor) {
 export function listAgentRuns(store: CrmStore, user: AgentActor, limit = 20, conversationId = "") {
   return store.agentRuns
     .filter((item) => item.ownerId === user.id
-      && (user.role === "super_admin" || item.teamId === user.teamId)
+      && item.teamId === user.teamId
       && (!conversationId || item.conversationId === conversationId))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .slice(0, Math.max(1, Math.min(100, limit)))
@@ -3293,7 +3286,7 @@ export function listAgentRuns(store: CrmStore, user: AgentActor, limit = 20, con
 export function listAgentMissionCheckpoints(store: CrmStore, user: AgentActor, runId: string, limit = 30) {
   requireRun(store, runId, user, true);
   return store.agentMissionCheckpoints
-    .filter((item) => item.runId === runId && item.ownerId === user.id && (user.role === "super_admin" || item.teamId === user.teamId))
+    .filter((item) => item.runId === runId && item.ownerId === user.id && item.teamId === user.teamId)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .slice(0, Math.max(1, Math.min(80, limit)))
     .map((item) => ({
@@ -3313,7 +3306,7 @@ export async function restoreAgentMissionCheckpoint(store: CrmStore, user: Agent
   const checkpoint = store.agentMissionCheckpoints.find((item) => item.id === checkpointId
     && item.runId === runId
     && item.ownerId === user.id
-    && (user.role === "super_admin" || item.teamId === user.teamId));
+    && item.teamId === user.teamId);
   if (!checkpoint) throw new Error("Mission 检查点不存在或无权访问");
   if (current.steps.some((item) => item.risk === "external" && ["queued", "running", "done"].includes(item.status))) {
     throw new Error("Mission 已存在外部动作，禁止回退以避免重复发送");
@@ -3368,7 +3361,7 @@ export async function restoreAgentMissionCheckpoint(store: CrmStore, user: Agent
 
 export function listAgentConversations(store: CrmStore, user: AgentActor, limit = 30) {
   const groups = new Map<string, AgentRunRecord[]>();
-  for (const item of store.agentRuns.filter((run) => run.ownerId === user.id && (user.role === "super_admin" || run.teamId === user.teamId))) {
+  for (const item of store.agentRuns.filter((run) => run.ownerId === user.id && run.teamId === user.teamId)) {
     const conversationId = item.conversationId || `legacy_${item.id}`;
     const group = groups.get(conversationId) || [];
     group.push(item);

@@ -41,3 +41,4 @@ assert.throws(() => assertDatabaseProfile(env({
 })), /测试档位只能连接/u);
 
 console.log(JSON.stringify({ ok: true, profiles: 3, wrongDatabaseBlocked: true }));
+

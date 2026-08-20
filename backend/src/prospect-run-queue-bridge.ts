@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { canonicalJsonStringify } from "./canonical-json.js";
 import { decryptAgentJobPayload } from "./agent-job-security.js";
 import {
   cancelProspectRunBridgeJob,
@@ -49,7 +48,7 @@ function fail(runId: string, message: string): never {
   throw new ProspectRunQueueBridgeIntegrityError(runId, message);
 }
 
-export function prospectRunQueueBindingHash(input: {
+function bindingHash(input: {
   teamId: string;
   ownerId: string;
   runId: string;
@@ -60,7 +59,7 @@ export function prospectRunQueueBindingHash(input: {
   bridgeVersion: "v1";
   executionSnapshotHash: string;
 }) {
-  return createHash("sha256").update(canonicalJsonStringify({
+  return createHash("sha256").update(JSON.stringify({
     teamId: input.teamId,
     ownerId: input.ownerId,
     runId: input.runId,
@@ -315,7 +314,7 @@ function validateParent(
   run: ProspectSearchRun,
   binding: ProspectRunQueueParentBinding
 ) {
-  const expectedHash = prospectRunQueueBindingHash({
+  const expectedHash = bindingHash({
     teamId: run.teamId,
     ownerId: run.ownerId,
     runId: run.id,
@@ -372,7 +371,7 @@ function validateChild(
   parent: ProspectRunQueueParentBinding,
   binding: ProspectRunQueueChildBinding
 ) {
-  const expectedHash = prospectRunQueueBindingHash({
+  const expectedHash = bindingHash({
     teamId: run.teamId,
     ownerId: run.ownerId,
     runId: run.id,
@@ -470,7 +469,7 @@ export function registerProspectRunQueueBridge(
       parentJobId: "",
       bridgeVersion: PROSPECT_RUN_QUEUE_BRIDGE_VERSION,
       executionSnapshotHash: run.executionSnapshotHash,
-      bindingHash: prospectRunQueueBindingHash({
+      bindingHash: bindingHash({
         teamId: run.teamId,
         ownerId: run.ownerId,
         runId: run.id,
@@ -515,7 +514,7 @@ export function registerProspectRunQueueBridge(
         parentJobId: parentJob.id,
         bridgeVersion: PROSPECT_RUN_QUEUE_BRIDGE_VERSION,
         executionSnapshotHash: run.executionSnapshotHash,
-        bindingHash: prospectRunQueueBindingHash({
+        bindingHash: bindingHash({
           teamId: run.teamId,
           ownerId: run.ownerId,
           runId: run.id,

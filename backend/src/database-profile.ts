@@ -71,3 +71,4 @@ export function assertDatabaseProfile(
   }
   return { profile, database };
 }
+

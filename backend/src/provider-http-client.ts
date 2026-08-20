@@ -89,9 +89,8 @@ function validateTarget(rawUrl: string, policy: ProviderNetworkPolicy, redirect 
   } catch {
     throw policyError("数据源地址格式无效");
   }
-  const allowedPorts = policy.allowedPorts || ["443"];
-  if (url.protocol !== "https:" || url.username || url.password || !allowedPorts.includes(url.port || "443")) {
-    throw policyError("数据源只允许使用不含账号密码的 HTTPS 允许端口");
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
+    throw policyError("数据源只允许使用不含账号密码的 HTTPS 标准端口");
   }
   const hostname = normalizeNetworkHostname(url.hostname);
   if (isForbiddenNetworkHostname(hostname)) {
@@ -103,8 +102,11 @@ function validateTarget(rawUrl: string, policy: ProviderNetworkPolicy, redirect 
   if (!allowedHosts.map(normalizeNetworkHostname).includes(hostname)) {
     throw policyError("数据源目标不在已批准主机白名单");
   }
+  const allowedPathPrefixes = redirect
+    ? [...policy.allowedPathPrefixes, ...(policy.redirectPathPrefixes || [])]
+    : policy.allowedPathPrefixes;
   if (!(policy.allowedPaths || []).includes(url.pathname)
-    && !policy.allowedPathPrefixes.some((prefix) => url.pathname.startsWith(prefix))) {
+    && !allowedPathPrefixes.some((prefix) => url.pathname.startsWith(prefix))) {
     throw policyError("数据源目标路径不在已批准范围");
   }
   return url;
@@ -260,16 +262,24 @@ async function requestOnce(
         response.arrayBuffer(),
         remainingDeadlineMs(deadlineAt)
       ));
-      if (responseBody.length > maxBytes) throw policyError("数据源响应超过允许大小");
+      const truncated = responseBody.length > maxBytes;
+      if (truncated && !policy.truncateResponse) {
+        throw policyError("数据源响应超过允许大小");
+      }
+      const returnedBody = truncated
+        ? responseBody.subarray(0, maxBytes)
+        : responseBody;
       recordResult({
         httpStatus: response.status,
-        responseSize: responseBody.length,
+        responseSize: returnedBody.length,
         errorCode: response.ok ? "" : `http_${response.status}`
       });
-      const result = new Response(responsePayload(response.status, responseBody), {
+      const responseHeaders = new Headers(response.headers);
+      if (truncated) responseHeaders.set("x-goodjob-response-truncated", "true");
+      const result = new Response(responsePayload(response.status, returnedBody), {
         status: response.status,
         statusText: response.statusText,
-        headers: response.headers
+        headers: responseHeaders
       });
       Object.defineProperty(result, "url", { value: url.toString() });
       return result;
@@ -301,7 +311,7 @@ async function requestOnce(
     const request = httpsRequest({
       protocol: "https:",
       hostname: requestHostname,
-      port: url.port || 443,
+      port: 443,
       method,
       path: `${url.pathname}${url.search}`,
       servername: isIP(requestHostname) ? undefined : requestHostname,
@@ -324,9 +334,49 @@ async function requestOnce(
     }, (response) => {
       const chunks: Buffer[] = [];
       let size = 0;
+      let bufferedSize = 0;
+      const finishResolve = (truncated: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearDeadline();
+        recordResult({
+          httpStatus: response.statusCode || 502,
+          responseSize: bufferedSize,
+          errorCode: response.statusCode && response.statusCode >= 200 && response.statusCode < 400
+            ? ""
+            : `http_${response.statusCode || 502}`
+        });
+        const responseHeaders: Array<[string, string]> = Object.entries(response.headers).flatMap(
+          ([key, value]): Array<[string, string]> => {
+            if (Array.isArray(value)) return value.map((item) => [key, item]);
+            return value === undefined ? [] : [[key, String(value)]];
+          }
+        );
+        if (truncated) responseHeaders.push(["x-goodjob-response-truncated", "true"]);
+        const status = response.statusCode || 502;
+        const result = new Response(responsePayload(status, Buffer.concat(chunks)), {
+          status,
+          headers: responseHeaders
+        });
+        Object.defineProperty(result, "url", { value: url.toString() });
+        resolve(result);
+      };
       response.on("data", (chunk: Buffer) => {
-        size += chunk.length;
+        const payload = Buffer.from(chunk);
+        size += payload.length;
+        const remaining = Math.max(0, maxBytes - bufferedSize);
+        if (remaining) {
+          const accepted = payload.subarray(0, remaining);
+          chunks.push(accepted);
+          bufferedSize += accepted.length;
+        }
         if (size > maxBytes) {
+          if (policy.truncateResponse) {
+            finishResolve(true);
+            response.destroy();
+            request.destroy();
+            return;
+          }
           const error = policyError("数据源响应超过允许大小");
           if (!settled) {
             settled = true;
@@ -342,32 +392,9 @@ async function requestOnce(
           request.destroy(error);
           return;
         }
-        chunks.push(Buffer.from(chunk));
       });
       response.on("end", () => {
-        if (settled) return;
-        settled = true;
-        clearDeadline();
-        recordResult({
-          httpStatus: response.statusCode || 502,
-          responseSize: size,
-          errorCode: response.statusCode && response.statusCode >= 200 && response.statusCode < 400
-            ? ""
-            : `http_${response.statusCode || 502}`
-        });
-        const responseHeaders: Array<[string, string]> = Object.entries(response.headers).flatMap(
-          ([key, value]): Array<[string, string]> => {
-            if (Array.isArray(value)) return value.map((item) => [key, item]);
-            return value === undefined ? [] : [[key, String(value)]];
-          }
-        );
-        const status = response.statusCode || 502;
-        const result = new Response(responsePayload(status, Buffer.concat(chunks)), {
-          status,
-          headers: responseHeaders
-        });
-        Object.defineProperty(result, "url", { value: url.toString() });
-        resolve(result);
+        finishResolve(false);
       });
       response.on("error", finishReject);
     });
@@ -434,9 +461,8 @@ export function assertProviderBaseUrlAllowed(rawUrl: string, policy: ProviderNet
   } catch {
     throw policyError("数据源地址格式无效");
   }
-  const allowedPorts = policy.allowedPorts || ["443"];
-  if (url.protocol !== "https:" || url.username || url.password || !allowedPorts.includes(url.port || "443")) {
-    throw policyError("数据源只允许使用不含账号密码的 HTTPS 允许端口");
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
+    throw policyError("数据源只允许使用不含账号密码的 HTTPS 标准端口");
   }
   const hostname = normalizeNetworkHostname(url.hostname);
   if (isForbiddenNetworkHostname(hostname)) {

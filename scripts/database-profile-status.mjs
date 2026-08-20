@@ -55,3 +55,4 @@ for (const [profile, file] of [
 
 console.log(JSON.stringify({ ok: results.every((item) => item.ok), profiles: results }, null, 2));
 if (results.some((item) => !item.ok)) process.exitCode = 1;
+

@@ -1,7 +1,36 @@
-node_modules/
-backend/dist/
-frontend/dist/
-whatsapp-plugin/dist/
-*.tsbuildinfo
-*.log
 .env
+.env.*.local
+.data/
+backups/
+*.dump
+*.db
+*.sqlite
+*.sql.gz
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.log
+backend/.wwebjs_auth/
+backend/uploads/
+dist-packages/
+
+# Local build/runtime artifacts and packaged binaries
+.build-windows-portable/
+.runtime-cache/
+.cache/
+.vite/
+coverage/
+*.tsbuildinfo
+*.zip
+*.tar.gz
+*.tgz
+
+# Local browser/session state and generated uploads
+.wwebjs_auth/
+.data/
+*.key
+
+# OS metadata and full database exports
+.DS_Store
+*.full.sql

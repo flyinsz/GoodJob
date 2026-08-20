@@ -18,12 +18,15 @@ import {
   dealEvents,
   deals,
   examAttempts,
+  examAssignments,
   examQuestionLinks,
   examQuestions,
+  examSnapshots,
   exams,
   importExportJobs,
   internalMessages,
   knowledgeAssets,
+  skillResources,
   leadActivities,
   leadSourceConfigs,
   leadSourceEvents,
@@ -81,6 +84,7 @@ import {
   prospectIcpPolicySnapshots,
   prospectSuppressionEvents,
   prospectTouchpoints,
+  outboundEmailLogs,
   procurementSignals,
   dealRecommendations,
   customerIntelligenceSuggestions,
@@ -107,6 +111,9 @@ import {
   tradeDocuments,
   users,
   wecomMessages,
+  wecomCommandEndpoints,
+  wecomMemberBindings,
+  wecomCommandReceipts,
   websiteOpportunities,
   whatsappBindings,
   whatsappMessages
@@ -160,9 +167,8 @@ import {
   type ProspectRunFeedReadInput,
   type ProspectRunFeedReadResult
 } from "./prospect-live-events.js";
-import type { AcquisitionOutcomeFeedback, AgentJob, AgentJobIdempotencyAlias, AgentMemoryRecord, AgentMissionCheckpointRecord, AgentRunEventRecord, AgentRunRecord, AgentRunStepRecord, AiModelConfig, CaseStudy, CommissionCalculation, CommissionExport, CommissionItem, CommissionProduct, CommissionRule, Competitor, Customer, CustomerAcquisitionSourceEvent, CustomerActivity, CustomerIntelligenceSuggestion, CustomerMaintenanceWatch, CustomerOwnershipEvent, CustomerOwnershipMutationInput, CustomerOwnershipMutationResult, DailyReport, DailyReportComment, Deal, DealEvent, DealRecommendation, Exam, ExamAttempt, ExamQuestion, ExamQuestionLink, ImportExportJob, InternalMessage, KnowledgeAsset, Lead, LeadActivity, LeadSourceConfig, LeadSourceEvent, MarketOpportunityBatch, MarketOpportunityCalculationEvent, MarketOpportunitySnapshot, MarketTradeObservation, Memo, MonthlySalesRecord, OcrJob, Organization, OrganizationAcceptedIdentifier, OrganizationAliasFact, OrganizationCanonicalMapping, OrganizationIdentityClaim, OrganizationIdentityConflict, OrganizationIdentityConflictReview, OrganizationIdentityEvent, OrganizationIdentityResolution, OrganizationRelationFact, OrganizationSourceBinding, OutreachSequence, PlanTask, PlanTemplate, ProblemItem, ProcurementSignal, ProspectCampaign, ProspectCampaignEvent, ProspectCampaignVersion, ProspectCandidateProcessingState, ProspectCoverageEvent, ProspectExecutionAttempt, ProspectExecutionCheckpoint, ProspectExecutionEvent, ProspectExecutionKernelState, ProspectExecutionLease, ProspectExecutionPage, ProspectExecutionThrottleBucket, ProspectProviderRequestAccountingEvidence, ProspectProviderRequestAttemptBinding, ProspectProviderRequestDispatch, ProspectProviderRequestEvent, ProspectProviderRequestLedger, ProspectRunEvent, ProspectRunQueueChildBinding, ProspectRunQueueParentBinding, ProspectRunShard, ProspectSchedule, ProspectSearchRun, ProspectSourceRawBatch, ProspectSourceRawHit, ProspectSourceRawRecord, ProspectStrategy, ProspectStrategyEvent, ProspectStrategySourcePosition, ProspectStrategySuggestion, ProspectSuperSearchEvent, ProspectSuperSearchMission, ProspectSuperSearchRound, ProspectTouchpoint, ProviderCatalogItem, ProviderConnection, ProviderRequestLog, ProviderResponseCache, Reminder, SalesRecordAudit, SalesTrainingRun, TenantProspect, Todo, TradeDocument, User, WecomMessage, WebsiteOpportunity, WhatsAppMessage, WhatsAppBinding } from "./types.js";
+import type { AcquisitionOutcomeFeedback, AgentJob, AgentJobIdempotencyAlias, AgentMemoryRecord, AgentMissionCheckpointRecord, AgentRunEventRecord, AgentRunRecord, AgentRunStepRecord, AiModelConfig, CaseStudy, CommissionCalculation, CommissionExport, CommissionItem, CommissionProduct, CommissionRule, Competitor, Customer, CustomerAcquisitionSourceEvent, CustomerActivity, CustomerIntelligenceSuggestion, CustomerMaintenanceWatch, CustomerOwnershipEvent, CustomerOwnershipMutationInput, CustomerOwnershipMutationResult, DailyReport, DailyReportComment, Deal, DealEvent, DealRecommendation, Exam, ExamAssignment, ExamAttempt, ExamQuestion, ExamQuestionLink, ExamSnapshot, ImportExportJob, InternalMessage, KnowledgeAsset, Lead, LeadActivity, LeadSourceConfig, LeadSourceEvent, MarketOpportunityBatch, MarketOpportunityCalculationEvent, MarketOpportunitySnapshot, MarketTradeObservation, Memo, MonthlySalesRecord, OcrJob, Organization, OutboundEmailLog, OrganizationAcceptedIdentifier, OrganizationAliasFact, OrganizationCanonicalMapping, OrganizationIdentityClaim, OrganizationIdentityConflict, OrganizationIdentityConflictReview, OrganizationIdentityEvent, OrganizationIdentityResolution, OrganizationRelationFact, OrganizationSourceBinding, OutreachSequence, PlanTask, PlanTemplate, ProblemItem, ProcurementSignal, ProspectCampaign, ProspectCampaignEvent, ProspectCampaignVersion, ProspectCandidateProcessingState, ProspectCoverageEvent, ProspectExecutionAttempt, ProspectExecutionCheckpoint, ProspectExecutionEvent, ProspectExecutionKernelState, ProspectExecutionLease, ProspectExecutionPage, ProspectExecutionThrottleBucket, ProspectProviderRequestAccountingEvidence, ProspectProviderRequestAttemptBinding, ProspectProviderRequestDispatch, ProspectProviderRequestEvent, ProspectProviderRequestLedger, ProspectRunEvent, ProspectRunQueueChildBinding, ProspectRunQueueParentBinding, ProspectRunShard, ProspectSchedule, ProspectSearchRun, ProspectSourceRawBatch, ProspectSourceRawHit, ProspectSourceRawRecord, ProspectStrategy, ProspectStrategyEvent, ProspectStrategySourcePosition, ProspectStrategySuggestion, ProspectSuperSearchEvent, ProspectSuperSearchMission, ProspectSuperSearchRound, ProspectTouchpoint, ProviderCatalogItem, ProviderConnection, ProviderRequestLog, ProviderResponseCache, Reminder, SalesRecordAudit, SessionUser, SkillResource, TenantProspect, Todo, TradeDocument, TradeDocumentImportAnalysis, User, WecomCommandEndpoint, WecomCommandReceipt, WecomMemberBinding, WecomMessage, WebsiteOpportunity, WhatsAppMessage, WhatsAppBinding } from "./types.js";
 import { mutateCustomerOwnershipMemory } from "./customer-public-pool.js";
-import type { SalesDistillation, SalesPlaybookActivation } from "./types.js";
 import type { AgentTriggerEventRecord, AgentTriggerRuleRecord } from "./types.js";
 import type { AgentEvaluationRunRecord, AgentModelCallRecord } from "./types.js";
 import type { AgentKnowledgeDocument } from "./types.js";
@@ -179,7 +185,13 @@ import type {
   ProspectIcpPolicySnapshot,
   ProspectSuppressionEvent
 } from "./types.js";
-import type { CompanyProfile, Product, Shipment } from "./types.js";
+import type { CompanyProfile, DocumentDefaultProfile, DocumentLetterhead, DocumentSignature, DocumentStamp, LogEntry, Product, Shipment, TeamSystemSettings } from "./types.js";
+import type { IamCapabilitySnapshot } from "./iam/iam-capabilities.js";
+import { buildLegacyCapabilitySnapshot } from "./iam/iam-capabilities.js";
+import type { IamManagementService } from "./iam/iam-management-service.js";
+import type { PlatformOperationsService } from "./iam/platform-operations-service.js";
+import type { PlatformMfaService } from "./iam/platform-mfa.js";
+import { createMemoryApprovalService, type ApprovalService } from "./iam/approval-service.js";
 
 export interface PersistedStoreMutation<T> {
   value: T;
@@ -190,6 +202,11 @@ export interface CrmStore {
   mode: "memory" | "mysql";
   users: User[];
   companyProfiles: CompanyProfile[];
+  documentLetterheads: DocumentLetterhead[];
+  documentStamps: DocumentStamp[];
+  documentSignatures: DocumentSignature[];
+  documentDefaultProfiles: DocumentDefaultProfile[];
+  teamSystemSettings: TeamSystemSettings[];
   dailyReports: DailyReport[];
   dailyReportComments: DailyReportComment[];
   internalMessages: InternalMessage[];
@@ -206,18 +223,26 @@ export interface CrmStore {
   dealEvents: DealEvent[];
   reminders: Reminder[];
   knowledgeAssets: KnowledgeAsset[];
+  skillResources: SkillResource[];
   exams: Exam[];
   examQuestions: ExamQuestion[];
   examQuestionLinks: ExamQuestionLink[];
   examAttempts: ExamAttempt[];
+  examAssignments: ExamAssignment[];
+  examSnapshots: ExamSnapshot[];
   importExportJobs: ImportExportJob[];
   tradeDocuments: TradeDocument[];
+  tradeDocumentImportAnalyses: TradeDocumentImportAnalysis[];
   wecomMessages: WecomMessage[];
+  wecomCommandEndpoints?: WecomCommandEndpoint[];
+  wecomMemberBindings?: WecomMemberBinding[];
+  wecomCommandReceipts?: WecomCommandReceipt[];
   ocrJobs: OcrJob[];
   websiteOpportunities: WebsiteOpportunity[];
   aiModelConfigs: AiModelConfig[];
   products: Product[];
   shipments: Shipment[];
+  logs: LogEntry[];
   providerCatalog: ProviderCatalogItem[];
   providerConnections: ProviderConnection[];
   providerRequestLogs: ProviderRequestLog[];
@@ -240,9 +265,6 @@ export interface CrmStore {
   agentEvaluationRuns: AgentEvaluationRunRecord[];
   outreachSequences: OutreachSequence[];
   customerMaintenanceWatches: CustomerMaintenanceWatch[];
-  salesDistillations: SalesDistillation[];
-  salesPlaybookActivations: SalesPlaybookActivation[];
-  salesTrainingRuns: SalesTrainingRun[];
   prospectCampaigns: ProspectCampaign[];
   prospectCampaignVersions: ProspectCampaignVersion[];
   prospectCampaignEvents: ProspectCampaignEvent[];
@@ -299,6 +321,7 @@ export interface CrmStore {
   prospectSuppressionEvents: ProspectSuppressionEvent[];
   prospectContactabilityDecisions: ProspectContactabilityDecision[];
   prospectTouchpoints: ProspectTouchpoint[];
+  outboundEmailLogs: OutboundEmailLog[];
   procurementSignals: ProcurementSignal[];
   dealRecommendations: DealRecommendation[];
   acquisitionOutcomeFeedback: AcquisitionOutcomeFeedback[];
@@ -325,6 +348,7 @@ export interface CrmStore {
   persist(): Promise<void>;
   persistProducts(): Promise<void>;
   persistShipments(): Promise<void>;
+  persistLogs(): Promise<void>;
   persistMutation?<T>(
     mutation: () => PersistedStoreMutation<T>
   ): Promise<T>;
@@ -380,13 +404,28 @@ export interface CrmStore {
     input: ProspectRunFeedReadInput
   ): Promise<ProspectRunFeedReadResult>;
   readBarrier(): Promise<void>;
+  getIamCapabilitySnapshot?(actor: SessionUser): Promise<IamCapabilitySnapshot>;
+  validateIamSession?(actor: SessionUser): Promise<{ valid: boolean; message?: string }>;
+  resolveIamDataScope?(actor: SessionUser, permissionCode: string): Promise<{ tenantWide: boolean; ownerIds: string[] }>;
+  iamManagement?: IamManagementService;
+  platformOperations?: PlatformOperationsService;
+  platformMfa?: PlatformMfaService;
+  approvalOperations?: ApprovalService;
+  reloadIamUsers?(): Promise<void>;
   close?(): Promise<void>;
 }
 
 export const memoryStore: CrmStore = {
   mode: "memory",
+  getIamCapabilitySnapshot: async (actor) => buildLegacyCapabilitySnapshot(actor),
+  approvalOperations: createMemoryApprovalService(),
   users,
   companyProfiles,
+  documentLetterheads: [],
+  documentStamps: [],
+  documentSignatures: [],
+  documentDefaultProfiles: [],
+  teamSystemSettings: [],
   dailyReports,
   dailyReportComments,
   internalMessages,
@@ -403,13 +442,20 @@ export const memoryStore: CrmStore = {
   dealEvents,
   reminders,
   knowledgeAssets,
+  skillResources,
   exams,
   examQuestions,
   examQuestionLinks,
   examAttempts,
+  examAssignments,
+  examSnapshots,
   importExportJobs,
   tradeDocuments,
+  tradeDocumentImportAnalyses: [],
   wecomMessages,
+  wecomCommandEndpoints,
+  wecomMemberBindings,
+  wecomCommandReceipts,
   ocrJobs,
   websiteOpportunities: websiteOpportunities.map((item) =>
     ensureProspectVerificationReport(item)
@@ -428,6 +474,7 @@ export const memoryStore: CrmStore = {
   agentRuns: [],
   products: [],
   shipments: [],
+  logs: [],
   agentRunSteps: [],
   agentRunEvents: [],
   agentMissionCheckpoints: [],
@@ -439,9 +486,6 @@ export const memoryStore: CrmStore = {
   agentEvaluationRuns: [],
   outreachSequences: [],
   customerMaintenanceWatches: [],
-  salesDistillations: [],
-  salesPlaybookActivations: [],
-  salesTrainingRuns: [],
     prospectCampaigns,
     prospectCampaignVersions,
     prospectCampaignEvents,
@@ -495,6 +539,7 @@ export const memoryStore: CrmStore = {
     prospectSuppressionEvents,
     prospectContactabilityDecisions,
     prospectTouchpoints,
+    outboundEmailLogs,
     procurementSignals,
     dealRecommendations,
     acquisitionOutcomeFeedback,
@@ -525,6 +570,9 @@ export const memoryStore: CrmStore = {
     // Memory mode intentionally keeps current in-process state only.
   },
   async persistShipments() {
+    // Memory mode intentionally keeps current in-process state only.
+  },
+  async persistLogs() {
     // Memory mode intentionally keeps current in-process state only.
   },
   async mutateCustomerOwnership(input) {

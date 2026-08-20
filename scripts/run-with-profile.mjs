@@ -75,3 +75,4 @@ child.once("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   else process.exitCode = code ?? 1;
 });
+

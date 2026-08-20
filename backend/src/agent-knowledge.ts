@@ -5,16 +5,14 @@ import path from "node:path";
 import { z } from "zod";
 import type { AgentActor, AgentPlanContext } from "./ai-agent.js";
 import { compileAgentGoalSpec, goalSpecSearchText } from "./agent-goal.js";
+import { canSeeOwner, hasIamPermission } from "./auth.js";
 import type { CrmStore } from "./store.js";
 import type {
   AgentKnowledgeDocument,
   AgentKnowledgeKind,
   AgentKnowledgeScope,
   AgentKnowledgeStatus,
-  Role
 } from "./types.js";
-
-const roleSchema = z.enum(["sales", "manager", "admin", "super_admin"]);
 const kindSchema = z.enum(["system", "module", "workflow", "policy", "field", "playbook", "failure_case"]);
 const systemFileSchema = z.object({
   id: z.string().trim().min(4).max(160),
@@ -24,7 +22,7 @@ const systemFileSchema = z.object({
   summary: z.string().trim().min(2).max(500),
   content: z.string().trim().min(10).max(8_000),
   keywords: z.array(z.string().trim().min(1).max(80)).max(40).default([]),
-  roles: z.array(roleSchema).min(1).max(4),
+  permissionCodes: z.array(z.string().trim().min(3).max(120)).min(1).max(30).default(["agent.use"]),
   toolRefs: z.array(z.string().trim().min(2).max(120)).max(40).default([]),
   successCriteria: z.array(z.string().trim().min(2).max(300)).max(20).default([]),
   failureCases: z.array(z.string().trim().min(2).max(300)).max(20).default([]),
@@ -39,7 +37,7 @@ const managedInputSchema = z.object({
   summary: z.string().trim().min(2).max(500),
   content: z.string().trim().min(10).max(8_000),
   keywords: z.array(z.string().trim().min(1).max(80)).max(40).default([]),
-  roles: z.array(roleSchema).min(1).max(4).default(["sales", "manager", "admin", "super_admin"]),
+  permissionCodes: z.array(z.string().trim().min(3).max(120)).min(1).max(30).default(["agent.use"]),
   toolRefs: z.array(z.string().trim().min(2).max(120)).max(40).default([]),
   successCriteria: z.array(z.string().trim().min(2).max(300)).max(20).default([]),
   failureCases: z.array(z.string().trim().min(2).max(300)).max(20).default([]),
@@ -85,7 +83,8 @@ function fallbackSystemDocument(): AgentKnowledgeDocument {
     scope: "system",
     summary: "系统知识目录不可用时保留的最小安全契约。",
     keywords: ["权限", "只读", "接口", "执行"],
-    roles: ["sales", "manager", "admin", "super_admin"],
+    roles: [],
+    permissionCodes: ["agent.use"],
     toolRefs: ["api.catalog"],
     successCriteria: ["遵守真实权限", "使用真实工具结果"],
     failureCases: ["猜测接口", "编造结果"],
@@ -116,6 +115,7 @@ export function reloadSystemAgentKnowledge() {
         const modifiedAt = statSync(path.join(directory, fileName)).mtime.toISOString();
         documents.push({
           ...parsed,
+          roles: [],
           ownerId: "",
           teamId: "all",
           scope: "system",
@@ -149,28 +149,28 @@ export function systemAgentKnowledge() {
 }
 
 function canManageTeam(actor: AgentActor) {
-  return ["manager", "admin", "super_admin"].includes(actor.role);
+  return hasIamPermission(actor, "agent.manage");
 }
 
 function sameTeam(actor: AgentActor, teamId: string) {
-  return actor.role === "super_admin" || actor.teamId === teamId;
+  return actor.teamId === teamId;
 }
 
 function canSeeManaged(actor: AgentActor, document: AgentKnowledgeDocument, includeUnpublished: boolean) {
   if (!sameTeam(actor, document.teamId)) return false;
-  if (!document.roles.includes(actor.role as Role)) return false;
+  if (!document.permissionCodes.some((permissionCode) => hasIamPermission(actor, permissionCode))) return false;
   if (document.status === "published") return true;
-  return includeUnpublished && (document.ownerId === actor.id || canManageTeam(actor));
+  return includeUnpublished && (document.ownerId === actor.id || (canManageTeam(actor) && canSeeOwner(actor, document.ownerId, document.teamId)));
 }
 
 function canEditManaged(actor: AgentActor, document: AgentKnowledgeDocument) {
   return document.sourceType !== "system_file"
     && sameTeam(actor, document.teamId)
-    && (document.ownerId === actor.id || canManageTeam(actor));
+    && (document.ownerId === actor.id || (canManageTeam(actor) && canSeeOwner(actor, document.ownerId, document.teamId)));
 }
 
 function semanticDocument(document: Pick<AgentKnowledgeDocument,
-  "kind" | "scope" | "module" | "title" | "summary" | "content" | "keywords" | "roles" |
+  "kind" | "scope" | "module" | "title" | "summary" | "content" | "keywords" | "permissionCodes" |
   "toolRefs" | "successCriteria" | "failureCases" | "sourceType" | "sourceId">) {
   return document;
 }
@@ -179,47 +179,6 @@ function updateChecksum(document: AgentKnowledgeDocument) {
   document.checksum = hashKnowledge(semanticDocument(document));
 }
 
-function distillationDocuments(store: CrmStore, actor: AgentActor): AgentKnowledgeDocument[] {
-  return store.salesDistillations
-    .filter((item) => item.status === "published" && sameTeam(actor, item.teamId))
-    .map((item) => {
-      const content = [
-        ...item.patterns,
-        ...item.playbook.map((entry) => `${entry.stage}：${entry.action}；依据：${entry.evidence}`),
-        ...item.coachingActions.map((entry) => `训练动作：${entry}`)
-      ].join("\n");
-      const publishedAt = item.publishedAt || item.createdAt;
-      return {
-        id: `distillation.${item.id}`,
-        ownerId: item.createdBy,
-        teamId: item.teamId,
-        kind: "playbook",
-        scope: "team",
-        module: "sales",
-        title: `${item.sourceUserName} 业务打法`,
-        summary: `${item.periodDays} 天业务样本形成的已发布团队打法`,
-        content,
-        keywords: ["业务员蒸馏", "销售打法", ...item.playbook.map((entry) => entry.stage)],
-        roles: ["sales", "manager", "admin", "super_admin"],
-        toolRefs: ["distillation.list_playbooks", "distillation.activate_playbook"],
-        successCriteria: item.coachingActions,
-        failureCases: [],
-        sourceType: "distillation",
-        sourceId: item.id,
-        status: "published",
-        trustLevel: "reviewed",
-        version: "1.0.0",
-        revision: 1,
-        checksum: hashKnowledge({ id: item.id, content }),
-        publishedBy: item.publishedBy || item.createdBy,
-        publishedAt,
-        usageCount: 0,
-        lastUsedAt: "",
-        createdAt: item.createdAt,
-        updatedAt: publishedAt
-      };
-    });
-}
 
 export function listAgentKnowledgeDocuments(store: CrmStore, actor: AgentActor, options: {
   status?: AgentKnowledgeStatus | "all";
@@ -231,11 +190,10 @@ export function listAgentKnowledgeDocuments(store: CrmStore, actor: AgentActor, 
   const query = String(options.query || "").trim().toLowerCase();
   const includeSystem = options.includeSystem !== false;
   const systemDocuments = includeSystem
-    ? systemAgentKnowledge().documents.filter((item) => item.roles.includes(actor.role as Role))
+    ? systemAgentKnowledge().documents.filter((item) => item.permissionCodes.some((permissionCode) => hasIamPermission(actor, permissionCode)))
     : [];
   const managed = store.agentKnowledgeDocuments.filter((item) => canSeeManaged(actor, item, true));
-  const derived = distillationDocuments(store, actor);
-  return [...systemDocuments, ...managed, ...derived]
+  return [...systemDocuments, ...managed]
     .filter((item) => !options.status || options.status === "all" || item.status === options.status)
     .filter((item) => !options.kind || options.kind === "all" || item.kind === options.kind)
     .filter((item) => !options.module || item.module === options.module)
@@ -254,6 +212,7 @@ export async function createAgentKnowledgeDraft(store: CrmStore, actor: AgentAct
     ownerId: actor.id,
     teamId: actor.teamId,
     ...parsed,
+    roles: [],
     status: "draft",
     trustLevel: "candidate",
     version: "1.0.0",
@@ -351,7 +310,6 @@ function goalDomainModule(query: string, activeView = "") {
     communication: "whatsapp",
     research: "ai-research",
     maintenance: "customers",
-    "sales-training": "sales-distillation",
     knowledge: "knowledge"
   };
   return {
@@ -370,9 +328,8 @@ export function retrieveAgentKnowledge(store: CrmStore, actor: AgentActor, query
   const queryTerms = knowledgeTerms(semantic.expandedQuery);
   const moduleName = semantic.moduleName;
   const documents = [
-    ...systemAgentKnowledge().documents.filter((item) => item.roles.includes(actor.role as Role)),
-    ...store.agentKnowledgeDocuments.filter((item) => canSeeManaged(actor, item, false) && item.status === "published"),
-    ...distillationDocuments(store, actor)
+    ...systemAgentKnowledge().documents.filter((item) => item.permissionCodes.some((permissionCode) => hasIamPermission(actor, permissionCode))),
+    ...store.agentKnowledgeDocuments.filter((item) => canSeeManaged(actor, item, false) && item.status === "published")
   ];
   const documentTerms = new Map(documents.map((document) => [document.id, knowledgeTerms([
     document.module,
@@ -467,14 +424,12 @@ export function compileAgentKnowledgeEnvelope(store: CrmStore, actor: AgentActor
 export function agentKnowledgeOverview(store: CrmStore, actor: AgentActor) {
   const state = systemAgentKnowledge();
   const visibleManaged = store.agentKnowledgeDocuments.filter((item) => canSeeManaged(actor, item, true));
-  const publishedDistillations = distillationDocuments(store, actor);
-  const modules = [...new Set([...state.documents, ...visibleManaged, ...publishedDistillations].map((item) => item.module))].sort();
+  const modules = [...new Set([...state.documents, ...visibleManaged].map((item) => item.module))].sort();
   return {
     systemCount: state.documents.length,
     managedCount: visibleManaged.length,
     publishedCount: visibleManaged.filter((item) => item.status === "published").length,
     reviewCount: visibleManaged.filter((item) => item.status === "review").length,
-    distillationCount: publishedDistillations.length,
     modules,
     loadedAt: state.loadedAt,
     directory: state.directory,
